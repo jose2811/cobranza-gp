@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const code = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
 const C = new Function(code + `; return {APP_VERSION, STORE_KEY, SCHEMA, DEFAULT_AJUSTES, parseMonto, parseInput, planMerge,
-  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo, parseFecha, cuandoTexto};`)();
+  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo, parseFecha, cuandoTexto, puedeCondonar, planTotalSugerido, planResto, planMensaje, evaluarPlan};`)();
 
 let ok = 0;
 const t = (name, fn) => { fn(); ok++; console.log('✓', name); };
@@ -15,7 +15,7 @@ const R1 = ['900000001','Mora','CI-PRUEBA','CLIENTE PRUEBA UNO',' $20,212.33 ','
 const R2 = ['900000002','Del Dia','CI-PRUEBA','MARÍA PRUEBA DOS',' $19,566.79 ',' $-   ',' $-   ','0','4 de 8','0000000002','20.6800000','-103.3600000','AV INVENTADA 45, COLONIA EJEMPLO'];
 const tsv = rows => rows.map(r=>r.join('\t')).join('\n');
 
-t('clave fija y esquema', ()=>{ assert.equal(C.STORE_KEY,'cobranza_gp_datos'); assert.equal(C.SCHEMA,3); });
+t('clave fija y esquema', ()=>{ assert.equal(C.STORE_KEY,'cobranza_gp_datos'); assert.equal(C.SCHEMA,4); });
 
 t('montos', ()=>{
   assert.equal(C.parseMonto(' $20,212.33 '), 20212.33);
@@ -173,7 +173,7 @@ t('migración v1 → v2 agrega campos sin borrar', ()=>{
   const v1 = {schema:1, cuentas:{'900000004':{id:'900000004', tel:'523300000000', historial:[{tipo:'Visita'}], compromisos:[]}}};
   const m = C.migrate(v1);
   const c = m.cuentas['900000004'];
-  assert.equal(m.schema,3); assert.deepEqual(c.telefonos,[]); assert.equal(c.telActivo,''); assert.deepEqual(c.extras,{});
+  assert.equal(m.schema,4); assert.deepEqual(c.telefonos,[]); assert.equal(c.telActivo,''); assert.deepEqual(c.extras,{});
   assert.equal(c.tel,'3300000000'); assert.equal(c.historial.length,1);
 });
 
@@ -306,6 +306,29 @@ t('preventivo: tono de cortesía, sin palabras de cobranza; texto 1.7.0 se actua
     "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Le mando un saludo y quedo a sus órdenes para cualquier cosa que necesite con su crédito.",
     "{saludo} {nombre}, soy {yo} de Crediclub. Paso a saludarle; cualquier duda con su crédito o sus pagos, aquí estoy para apoyarle."].join("\n---\n");
   assert.equal(C.migrate({schema:3, cuentas:{}, ajustes:{tplDelDia:v170}}).ajustes.tplDelDia, aj.tplDelDia);
+});
+
+t('plan de pago: condonación, resto, mensaje y evaluación', ()=>{
+  const c8 = {cliente:'JUAN PRUEBA', status:'Mora', dias:15, saldo:6045, multa:928};
+  const c5 = {cliente:'JUAN PRUEBA', status:'Mora', dias:5, saldo:6045, multa:928};
+  assert.equal(C.puedeCondonar(c8), true); assert.equal(C.puedeCondonar(c5), false);
+  assert.equal(C.planTotalSugerido(c8, true), 5117); assert.equal(C.planTotalSugerido(c8, false), 6045);
+  assert.equal(C.planTotalSugerido(c5, true), 6045);
+  const pagos = [{fecha:'2026-10-15',monto:2000},{fecha:'2026-10-16',monto:2000},{fecha:'2026-10-17',monto:0,resto:true}];
+  assert.equal(C.planResto(pagos, 6045), 2045); assert.equal(pagos[2].monto, 2045);
+  assert.equal(C.planResto(pagos, 3000), -1000);
+  const plan = {id:'p1', total:5117, condona:true, multa:928, pagos:[{fecha:'2026-10-17',monto:1117},{fecha:'2026-10-15',monto:2000},{fecha:'2026-10-16',monto:2000}]};
+  const m = C.planMensaje(c8, plan, {nombre:'José'}, new Date(2026,9,15,16));
+  assert.ok(m.startsWith('Buenas tardes Juan, le saluda José de Crediclub.'), m);
+  assert.ok(m.includes('• Hoy jueves 15: $2,000\n• Mañana viernes 16: $2,000\n• Sábado 17: $1,117'), m);
+  assert.ok(m.includes('Total: $5,117.') && m.includes('se le condona la multa de $928') && m.includes('la multa se mantiene'), m);
+  const sinCond = C.planMensaje(c8, {...plan, condona:false}, {nombre:'José'}, new Date(2026,9,15,16));
+  assert.ok(!sinCond.includes('multa'));
+  const cuenta = {compromisos:[{planId:'p1',estado:'cumplido'},{planId:'p1',estado:'pendiente'},{planId:'x',estado:'incumplido'}]};
+  assert.equal(C.evaluarPlan(cuenta, plan), 'activo');
+  cuenta.compromisos[1].estado='cumplido'; assert.equal(C.evaluarPlan(cuenta, plan), 'cumplido');
+  cuenta.compromisos[1].estado='incumplido'; assert.equal(C.evaluarPlan(cuenta, plan), 'incumplido');
+  assert.deepEqual(C.migrate({schema:3, cuentas:{'1':{id:'1'}}}).cuentas['1'].planes, []);
 });
 
 console.log(`\n${ok} pruebas OK`);

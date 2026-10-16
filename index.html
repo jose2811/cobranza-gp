@@ -265,6 +265,12 @@
   .pill.tramo-m1{background:var(--warn-bg);color:var(--warn);}
   .pill.tramo-m8{background:var(--bad);color:#1a0905;}
   .card.t-m1 .c-dias{color:var(--warn);}
+  .plan-row{display:grid;grid-template-columns:1.25fr 1fr auto auto;gap:6px;margin-bottom:8px;align-items:center;}
+  .plan-row .inp{padding:10px 8px;font-size:13.5px;min-width:0;}
+  .mini-btn.on{background:var(--accent);border-color:var(--accent);color:#1a1006;}
+  .plan-sum{margin-top:10px;}
+  .plan-tag{font-size:10.5px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.04em;}
+  .btn-row.tight{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}
   .banner.undo{background:var(--ok-bg);border-color:rgba(79,180,119,.4);color:var(--ok);}
   .banner.undo button{background:var(--ok);color:#08140c;}
   .banner button.x{background:transparent;color:inherit;padding:6px 4px;}
@@ -346,12 +352,12 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.7.1';
+const APP_VERSION = '1.8.0';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
 // v1: inicial · v2: teléfonos agregados (telefonos/telActivo) y columnas extra (extras)
-const SCHEMA = 3; // v3: fecha de vencimiento (vence)
+const SCHEMA = 4; // v3: fecha de vencimiento (vence) · v4: planes de pago (planes)
 const TEL_QUIEN = ['Cliente','Familiar','Referencia','Otro'];
 
 const GESTION_TIPOS = ['Llamada','WhatsApp','Visita','Otro'];
@@ -692,7 +698,7 @@ function nuevaCuenta(data, nowIso){
   const c = {id:data.id};
   for(const k of DATA_KEYS) c[k] = data[k]!==undefined ? data[k] : DATA_DEFAULTS[k];
   Object.assign(c, {alta:nowIso, actualizado:nowIso, assign:'', visita:'pendiente', obs:'', obsAt:'',
-    historial:[], compromisos:[], archivada:null, telefonos:[], telActivo:'', extras:Object.assign({}, data.extras||{})});
+    historial:[], compromisos:[], planes:[], archivada:null, telefonos:[], telActivo:'', extras:Object.assign({}, data.extras||{})});
   c.historial.unshift({id:uid(), ts:nowIso, tipo:'Sistema', auto:true,
     resultado:'', comentario:'Alta en seguimiento · '+(c.status||'')+' · '+c.dias+' días de atraso'});
   return c;
@@ -741,6 +747,8 @@ function migrate(raw){
     if(!Array.isArray(c.telefonos)) c.telefonos = [];
     if(c.telActivo === undefined) c.telActivo = '';
     if(!c.extras || typeof c.extras!=='object') c.extras = {};
+    // v4: planes de pago
+    if(!Array.isArray(c.planes)) c.planes = [];
     if(c.tel) c.tel = limpiaTel(c.tel);
   }
   // --- Aquí van las transformaciones de versiones futuras, por ejemplo:
@@ -759,6 +767,60 @@ function saludoHora(d){ const h = (d||new Date()).getHours(); return h<12 ? 'Bue
 // "hoy" / "mañana" / "este jueves 17" / "el jueves 17 de octubre". null si no hay fecha o ya pasó.
 const DIAS_SEM = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
 const MESES_L = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+/* ---------- Plan de pago ---------- */
+// La condonación de multa solo se ofrece con 8+ días de atraso (a esa altura la multa ya está aplicada
+// y está incluida en el saldo en atraso). Total con condonación = saldo en atraso − multa.
+const DIAS_CONDONA = 8;
+function puedeCondonar(c){ return (Number(c.dias)||0) >= DIAS_CONDONA && (Number(c.multa)||0) > 0; }
+function planTotalSugerido(c, condona){
+  const t = (Number(c.saldo)||0) - (condona && puedeCondonar(c) ? Number(c.multa)||0 : 0);
+  return Math.max(0, Math.round(t*100)/100);
+}
+// Recalcula el pago marcado como "resto" = total − los demás. Devuelve el resto (puede ser negativo = error).
+function planResto(pagos, total){
+  const otros = pagos.filter(p=>!p.resto).reduce((s,p)=>s+(Number(p.monto)||0),0);
+  const r = Math.round((total - otros)*100)/100;
+  pagos.forEach(p=>{ if(p.resto) p.monto = r; });
+  return r;
+}
+function money2(n){
+  n = Number(n)||0;
+  return '$' + n.toLocaleString('es-MX', {minimumFractionDigits: n%1 ? 2 : 0, maximumFractionDigits: 2});
+}
+function fechaPlanLbl(ymd, now){
+  const [y,m,d] = String(ymd).split('-').map(Number);
+  const f = new Date(y, m-1, d); now = now || new Date();
+  const dif = dayDiff(now, f), dia = DIAS_SEM[f.getDay()];
+  const cap = x => x.charAt(0).toUpperCase() + x.slice(1);
+  if(dif === 0) return 'Hoy ' + dia + ' ' + d;
+  if(dif === 1) return 'Mañana ' + dia + ' ' + d;
+  if(dif > 1 && dif <= 6) return cap(dia) + ' ' + d;
+  return cap(dia) + ' ' + d + ' de ' + MESES_L[m-1];
+}
+// Mensaje de confirmación del plan (solo para el titular: lleva montos).
+function planMensaje(c, plan, aj, now){
+  const first = (c.cliente||'').trim().split(/\s+/)[0] || '';
+  const nombre = first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+  const pagos = plan.pagos.slice().sort((a,b)=>a.fecha<b.fecha?-1:a.fecha>b.fecha?1:0);
+  let msg = saludoHora(now) + ' ' + nombre + ', le saluda ' + aj.nombre + ' de Crediclub. Como lo platicamos, le confirmo su plan de pagos:\n';
+  msg += pagos.map(p=>'• ' + fechaPlanLbl(p.fecha, now) + ': ' + money2(p.monto)).join('\n');
+  if(pagos.length > 1) msg += '\nTotal: ' + money2(plan.total) + '.';
+  if(plan.condona && plan.multa > 0)
+    msg += '\n\nSi cubre los pagos en las fechas acordadas, se le condona la multa de ' + money2(plan.multa) +
+           '; en caso de no cumplir, la multa se mantiene.';
+  msg += '\n\n¿Está de acuerdo? Quedo atento a su confirmación.';
+  return msg;
+}
+// Estado del plan según sus compromisos.
+function evaluarPlan(c, plan){
+  const cs = (c.compromisos||[]).filter(x=>x.planId===plan.id);
+  if(!cs.length) return 'cancelado';
+  if(cs.some(x=>x.estado==='incumplido')) return 'incumplido';
+  if(cs.some(x=>x.estado==='cancelado')) return 'cancelado';
+  if(cs.every(x=>x.estado==='cumplido')) return 'cumplido';
+  return 'activo';
+}
+
 function cuandoTexto(ymd, now){
   if(!ymd) return null;
   const [y,m,d] = String(ymd).split('-').map(Number); if(!y) return null;
@@ -1022,9 +1084,10 @@ function compHtml(c, hoy){
       : st==='vencido' ? '<span class="flag bad">Vencido</span>'
       : st==='cumplido' ? '<span class="flag ok">Cumplido</span>'
       : st==='incumplido' ? '<span class="flag bad">Incumplido</span>'
+      : st==='cancelado' ? '<span class="flag">Cancelado</span>'
       : '<span class="flag">Pendiente</span>';
     return `<div class="comp">
-      <div class="ct"><span><span class="cm">${esc(fmtMoney(x.monto))}</span> · ${esc(fmtFecha(x.fecha))}</span>${tag}</div>
+      <div class="ct"><span><span class="cm">${esc(money2(x.monto))}</span> · ${esc(fmtFecha(x.fecha))}${x.planId?' · <span class="plan-tag">Plan</span>':''}</span>${tag}</div>
       ${x.nota?`<div class="cn">${esc(x.nota)}</div>`:''}
       ${x.estado==='pendiente'?`<div class="cb">
         <button class="ok" data-act="comp-close" data-id="${esc(c.id)}" data-cid="${esc(x.id)}" data-estado="cumplido">✓ Cumplido</button>
@@ -1032,6 +1095,20 @@ function compHtml(c, hoy){
       </div>`:''}
     </div>`;
   }).join('');
+}
+function planesHtml(c){
+  const pa = (c.planes||[]).find(p=>p.estado==='activo');
+  if(!pa) return '';
+  const cs = c.compromisos.filter(x=>x.planId===pa.id), hechos = cs.filter(x=>x.estado==='cumplido').length;
+  return `<div class="section"><div class="field-label">Plan de pago activo</div>
+    <div class="comp">
+      <div class="ct"><span><span class="cm">${esc(money2(pa.total))}</span> · ${cs.length} pagos · ${hechos} cumplidos</span><span class="flag blue">Activo</span></div>
+      ${pa.condona&&pa.multa>0?`<div class="cn">Condona multa de ${esc(money2(pa.multa))} si cumple todos los pagos.</div>`:''}
+      <div class="cb">
+        <button data-act="plan-reenviar" data-id="${esc(c.id)}" data-pid="${esc(pa.id)}">💬 Reenviar</button>
+        <button class="no" data-act="plan-cancelar" data-id="${esc(c.id)}" data-pid="${esc(pa.id)}">Cancelar plan</button>
+      </div>
+    </div></div>`;
 }
 function flagsHtml(c, hoy){
   const out = [];
@@ -1046,6 +1123,11 @@ function flagsHtml(c, hoy){
     if(st==='vencido') out.push(`<span class="flag bad">🤝 Vencido ${esc(fmtFecha(p.fecha))} · ${esc(fmtMoney(p.monto))}</span>`);
     else if(st==='hoy') out.push(`<span class="flag warn">🤝 Vence hoy · ${esc(fmtMoney(p.monto))}</span>`);
     else out.push(`<span class="flag">🤝 ${esc(fmtFecha(p.fecha))} · ${esc(fmtMoney(p.monto))}</span>`);
+  }
+  const pa = (c.planes||[]).find(p=>p.estado==='activo');
+  if(pa){
+    const cs = c.compromisos.filter(x=>x.planId===pa.id), hechos = cs.filter(x=>x.estado==='cumplido').length;
+    out.push(`<span class="flag blue">📋 Plan ${hechos}/${cs.length}${pa.condona&&pa.multa>0?' · condona '+esc(money2(pa.multa)):''}</span>`);
   }
   const dp = diasParaPago(c);
   if(dp !== null && dp >= 0 && dp <= 6){
@@ -1152,6 +1234,7 @@ function cardHtml(c, pos, hoy){
       <div class="btn-row tight">
         <button class="btn" data-act="gestion" data-id="${id}">📝 Gestión</button>
         <button class="btn" data-act="compromiso" data-id="${id}">🤝 Compromiso</button>
+        <button class="btn" data-act="plan" data-id="${id}">📋 Plan</button>
         <button class="btn" data-act="archivar" data-id="${id}">🗂 Archivar</button>
       </div>
 
@@ -1175,6 +1258,7 @@ function cardHtml(c, pos, hoy){
         <div class="save-row"><span class="save-hint" id="hint-${id}"></span></div>
       </div>
 
+      ${planesHtml(c)}
       <div class="section"><div class="field-label">Compromisos de pago</div>${compHtml(c, hoy)}</div>
       <div class="section"><div class="field-label">Historial de gestiones</div>${histHtml(c)}</div>
       <div class="section"><button class="btn danger small" data-act="borrar" data-id="${id}">🗑 Borrar esta cuenta</button>
@@ -1295,7 +1379,7 @@ function openSheet(html){
   }
   $('sheet').scrollTop = 0;
 }
-function hideSheet(){ sheetOpen = false; $('sheetWrap').classList.remove('open'); $('sheet').innerHTML=''; }
+function hideSheet(){ sheetOpen = false; pState = null; $('sheetWrap').classList.remove('open'); $('sheet').innerHTML=''; }
 function closeSheet(){
   if(!sheetOpen) return;
   hideSheet();
@@ -1375,8 +1459,181 @@ function closeComp(id, cid, estado){
   const now = new Date().toISOString();
   x.estado = estado; x.cerrado = now;
   c.historial.unshift({id:uid(), ts:now, tipo:'Compromiso', auto:true, resultado: estado==='cumplido'?'Cumplido':'Incumplido',
-    comentario:`${fmtMoney(x.monto)} del ${fmtFecha(x.fecha)}${x.nota?' · '+x.nota:''}`});
-  saveData(); render(); toast(estado==='cumplido'?'Marcado como cumplido':'Marcado como incumplido');
+    comentario:`${money2(x.monto)} del ${fmtFecha(x.fecha)}${x.nota?' · '+x.nota:''}`});
+  let msg = estado==='cumplido'?'Marcado como cumplido':'Marcado como incumplido';
+  const plan = x.planId && (c.planes||[]).find(p=>p.id===x.planId);
+  if(plan && plan.estado==='activo'){
+    const ev = evaluarPlan(c, plan);
+    if(ev==='cumplido' || ev==='incumplido'){
+      plan.estado = ev; plan.cerrado = now;
+      if(ev==='incumplido'){
+        // Los demás pagos del plan quedan cancelados (ya no aplica el acuerdo).
+        c.compromisos.forEach(k=>{ if(k.planId===plan.id && k.estado==='pendiente'){ k.estado='cancelado'; k.cerrado=now; } });
+      }
+      const cond = plan.condona && plan.multa>0;
+      const res = ev==='cumplido' ? (cond ? 'Plan cumplido · condonación PROCEDE' : 'Plan cumplido')
+                                  : (cond ? 'Plan incumplido · condonación CANCELADA' : 'Plan incumplido');
+      c.historial.unshift({id:uid(), ts:now, tipo:'Plan', auto:true, resultado:res,
+        comentario: cond ? `Multa de ${money2(plan.multa)}` + (ev==='cumplido' ? ' — aplicar la condonación' : ' se mantiene') : ''});
+      msg = res;
+    }
+  }
+  saveData(); render(); toast(msg);
+}
+
+/* Plan de pago */
+let pState = null;
+function addDays(ymd, n){ const [y,m,d] = ymd.split('-').map(Number); return todayKey(new Date(y, m-1, d+n)); }
+function openPlan(id){
+  const c = store.cuentas[id]; if(!c) return;
+  const activo = (c.planes||[]).find(p=>p.estado==='activo');
+  if(activo && !confirm('Esta cuenta ya tiene un plan activo. Si haces uno nuevo, los pagos pendientes del plan anterior se cancelan. ¿Continuar?')) return;
+  const condona = puedeCondonar(c);
+  const hoy = todayKey();
+  pState = {id, condona, totalManual:false, total: planTotalSugerido(c, condona),
+    pagos:[{fecha:hoy, monto:'', resto:false}, {fecha:addDays(hoy,2), monto:0, resto:true}], nota:'', reemplaza: activo ? activo.id : null};
+  planResto(pState.pagos, pState.total);
+  renderPlan();
+}
+function renderPlan(){
+  const c = store.cuentas[pState.id];
+  const tercero = esTercero(c), tel = telActivo(c);
+  const puedeWA = !tercero && limpiaTel(tel).length === 10;
+  const resto = pState.pagos.find(p=>p.resto);
+  const suma = pState.pagos.reduce((s,p)=>s+(Number(p.monto)||0),0);
+  openSheet(`
+    <h2>Plan de pago</h2>
+    <div class="sh-sub">${esc(properCase(c.cliente))} · ${esc(TRAMO_LBL[tramo(c)])} · ${esc(c.dias)} días</div>
+    <div class="kv-grid section">
+      <div><span>Saldo en atraso</span><b>${esc(money2(c.saldo))}</b></div>
+      <div><span>Multa (referencia)</span><b>${esc(money2(c.multa))}</b></div>
+    </div>
+    ${puedeCondonar(c) ? `<label class="check"><input type="checkbox" id="pCond" ${pState.condona?'checked':''}>
+        Condonar multa de ${esc(money2(c.multa))} si cumple todos los pagos</label>`
+      : `<div class="help">La condonación de multa se ofrece a partir de ${DIAS_CONDONA} días de atraso.</div>`}
+    <div class="section"><div class="field-label">Total a cubrir en el plan</div>
+      <input class="inp" id="pTotal" type="number" inputmode="decimal" step="0.01" value="${pState.total}">
+      <div class="help">${pState.condona && puedeCondonar(c) ? 'Saldo en atraso − multa condonada. ' : 'Saldo en atraso. '}Puedes cambiarlo si negociaste otra cantidad.</div>
+    </div>
+    <div class="section"><div class="field-label">Pagos</div>
+      ${pState.pagos.map((p,i)=>`
+        <div class="plan-row">
+          <input class="inp" type="date" data-pf="${i}" value="${esc(p.fecha)}">
+          <input class="inp" type="number" inputmode="decimal" step="0.01" data-pm="${i}" value="${p.monto===''?'':esc(p.monto)}" ${p.resto?'readonly':''} placeholder="Monto">
+          <button class="mini-btn ${p.resto?'on':''}" data-act="p-resto" data-i="${i}">Resto</button>
+          ${pState.pagos.length>1?`<button class="mini-btn" data-act="p-del" data-i="${i}">✕</button>`:''}
+        </div>`).join('')}
+      <button class="btn small" data-act="p-add">＋ Agregar pago</button>
+      <div class="plan-sum" id="pSum">${planSumHtml(suma)}</div>
+    </div>
+    <div class="section"><div class="field-label">Nota (opcional)</div><input class="inp" id="pNota" value="${esc(pState.nota)}" placeholder="Ej. paga en la sucursal"></div>
+    ${puedeWA ? '' : `<div class="help" style="margin-top:12px">⚠️ ${tercero ? 'El teléfono en uso es de un tercero. El plan lleva montos, así que solo se envía al titular: cambia a su teléfono para enviarlo.' : 'Sin WhatsApp válido para enviar el plan.'}</div>`}
+    <div class="btn-row">
+      <button class="btn" data-act="sheet-close">Cancelar</button>
+      <button class="btn" data-act="p-save">Guardar</button>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn primary" data-act="p-save-wa" ${puedeWA?'':'disabled'}>💬 Guardar y enviar por WhatsApp</button>
+    </div>`);
+}
+function planSumHtml(suma){
+  const dif = Math.round((suma - (Number(pState.total)||0))*100)/100;
+  const neg = pState.pagos.some(p=>p.resto && Number(p.monto) < 0);
+  if(neg) return '<span class="flag bad">Los pagos ya superan el total</span>';
+  if(Math.abs(dif) >= 0.01) return `<span class="flag warn">Suma ${esc(money2(suma))} · ${dif>0?'sobra':'falta'} ${esc(money2(Math.abs(dif)))}</span>`;
+  return `<span class="flag ok">Suma ${esc(money2(suma))} ✓</span>`;
+}
+function planRecalc(){
+  planResto(pState.pagos, Number(pState.total)||0);
+  pState.pagos.forEach((p,i)=>{ if(p.resto){ const el = document.querySelector(`[data-pm="${i}"]`); if(el) el.value = p.monto; } });
+  const suma = pState.pagos.reduce((s,p)=>s+(Number(p.monto)||0),0);
+  const box = $('pSum'); if(box) box.innerHTML = planSumHtml(suma);
+}
+function planInput(el){
+  if(!pState) return;
+  if(el.id==='pTotal'){ pState.total = parseMonto(el.value)||0; pState.totalManual = true; planRecalc(); }
+  else if(el.id==='pNota'){ pState.nota = el.value; }
+  else if(el.dataset.pm !== undefined){ const p = pState.pagos[+el.dataset.pm]; if(!p.resto){ p.monto = el.value===''?'':parseMonto(el.value); planRecalc(); } }
+  else if(el.dataset.pf !== undefined){ pState.pagos[+el.dataset.pf].fecha = el.value; }
+  else if(el.id==='pCond'){
+    const c = store.cuentas[pState.id];
+    pState.condona = el.checked;
+    if(!pState.totalManual) pState.total = planTotalSugerido(c, pState.condona);
+    planResto(pState.pagos, pState.total); renderPlan();
+  }
+}
+function planAction(act, el){
+  const i = +el.dataset.i;
+  if(act==='p-add'){
+    const last = pState.pagos[pState.pagos.length-1];
+    const nuevo = {fecha: addDays(last && last.fecha ? last.fecha : todayKey(), 1), monto:0, resto:false};
+    // el nuevo pago queda como "resto" si el último lo era
+    if(last && last.resto){ last.resto = false; last.monto = ''; nuevo.resto = true; }
+    pState.pagos.push(nuevo);
+  } else if(act==='p-del'){
+    const wasResto = pState.pagos[i].resto;
+    pState.pagos.splice(i,1);
+    if(wasResto && pState.pagos.length) pState.pagos[pState.pagos.length-1].resto = true;
+  } else if(act==='p-resto'){
+    pState.pagos.forEach((p,k)=>{ if(k===i) p.resto = !p.resto; else p.resto = false; });
+    if(!pState.pagos[i].resto) pState.pagos[i].monto = '';
+  }
+  planResto(pState.pagos, Number(pState.total)||0);
+  renderPlan();
+}
+function savePlan(enviar){
+  const c = store.cuentas[pState.id]; if(!c) return closeSheet();
+  planResto(pState.pagos, Number(pState.total)||0);
+  const pagos = pState.pagos.map(p=>({fecha:p.fecha, monto:Math.round((Number(p.monto)||0)*100)/100}))
+    .sort((a,b)=>a.fecha<b.fecha?-1:a.fecha>b.fecha?1:0);
+  if(!pagos.length){ toast('Agrega al menos un pago'); return; }
+  if(pagos.some(p=>!p.fecha)){ toast('Falta la fecha de algún pago'); return; }
+  if(pagos.some(p=>!(p.monto>0))){ toast('Todos los pagos deben tener monto mayor a 0'); return; }
+  const now = new Date().toISOString();
+  // Si reemplaza un plan activo, se cancela lo pendiente de ese plan.
+  if(pState.reemplaza){
+    const viejo = c.planes.find(p=>p.id===pState.reemplaza);
+    if(viejo && viejo.estado==='activo'){
+      viejo.estado = 'cancelado'; viejo.cerrado = now;
+      c.compromisos.forEach(k=>{ if(k.planId===viejo.id && k.estado==='pendiente'){ k.estado='cancelado'; k.cerrado=now; } });
+      c.historial.unshift({id:uid(), ts:now, tipo:'Plan', auto:true, resultado:'Plan anterior cancelado (reemplazado)', comentario:''});
+    }
+  }
+  const condona = !!(pState.condona && puedeCondonar(c));
+  const plan = {id:uid(), creado:now, total:Math.round((pagos.reduce((s,p)=>s+p.monto,0))*100)/100,
+    condona, multa: condona ? Number(c.multa)||0 : 0, nota:pState.nota.trim(), estado:'activo', pagos};
+  c.planes.push(plan);
+  pagos.forEach((p,k)=>c.compromisos.push({id:uid(), fecha:p.fecha, monto:p.monto,
+    nota:`Plan · pago ${k+1} de ${pagos.length}${plan.nota?' · '+plan.nota:''}`, estado:'pendiente', creado:now, cerrado:null, planId:plan.id}));
+  c.historial.unshift({id:uid(), ts:now, tipo:'Plan', auto:true, resultado:`Plan de pago: ${pagos.length} ${pagos.length===1?'pago':'pagos'} · total ${money2(plan.total)}`,
+    comentario: pagos.map(p=>fmtFecha(p.fecha)+' '+money2(p.monto)).join(' · ') + (condona ? ` · condona multa ${money2(plan.multa)} si cumple` : '') + (plan.nota?' · '+plan.nota:'')});
+  let url = null;
+  if(enviar){
+    const tel = limpiaTel(telActivo(c));
+    if(!esTercero(c) && tel.length===10){
+      url = 'https://wa.me/52' + tel + '?text=' + encodeURIComponent(planMensaje(c, plan, store.ajustes));
+      c.historial.unshift({id:uid(), ts:new Date().toISOString(), tipo:'WhatsApp', resultado:'Plan enviado', comentario:'Confirmación del plan de pagos'});
+    }
+  }
+  saveData(); pState = null; closeSheet(); render();
+  if(url) window.open(url, '_blank', 'noopener');
+  toast('Plan guardado');
+}
+function cancelarPlan(id, pid){
+  const c = store.cuentas[id]; if(!c) return;
+  const plan = c.planes.find(p=>p.id===pid); if(!plan || plan.estado!=='activo') return;
+  if(!confirm('¿Cancelar el plan? Los pagos pendientes del plan se marcan como cancelados (no como incumplidos).')) return;
+  const now = new Date().toISOString();
+  plan.estado = 'cancelado'; plan.cerrado = now;
+  c.compromisos.forEach(k=>{ if(k.planId===pid && k.estado==='pendiente'){ k.estado='cancelado'; k.cerrado=now; } });
+  c.historial.unshift({id:uid(), ts:now, tipo:'Plan', auto:true, resultado:'Plan cancelado', comentario:''});
+  saveData(); render(); toast('Plan cancelado');
+}
+function reenviarPlan(id, pid){
+  const c = store.cuentas[id]; const plan = c && c.planes.find(p=>p.id===pid); if(!plan) return;
+  const tel = limpiaTel(telActivo(c));
+  if(esTercero(c) || tel.length!==10){ toast('El plan solo se envía al teléfono del titular'); return; }
+  window.open('https://wa.me/52' + tel + '?text=' + encodeURIComponent(planMensaje(c, plan, store.ajustes)), '_blank', 'noopener');
 }
 
 /* Archivar */
@@ -1634,6 +1891,12 @@ document.addEventListener('click', e=>{
     case 'g-save': saveGestion(); break;
     case 'compromiso': openCompromiso(id); break;
     case 'c-save': saveCompromiso(id); break;
+    case 'plan': openPlan(id); break;
+    case 'p-add': case 'p-del': case 'p-resto': planAction(act, el); break;
+    case 'p-save': savePlan(false); break;
+    case 'p-save-wa': savePlan(true); break;
+    case 'plan-cancelar': cancelarPlan(id, el.dataset.pid); break;
+    case 'plan-reenviar': reenviarPlan(id, el.dataset.pid); break;
     case 'comp-close': closeComp(id, el.dataset.cid, el.dataset.estado); break;
     case 'archivar': openArchivar(id); break;
     case 'a-motivo':
@@ -1673,6 +1936,7 @@ document.addEventListener('click', e=>{
 });
 document.addEventListener('change', e=>{
   const el = e.target;
+  if(pState && el.id==='pCond'){ planInput(el); return; }
   if(el.dataset.chg==='visita'){
     const c = store.cuentas[el.dataset.id]; c.visita = el.value; c.actualizado = new Date().toISOString();
     saveData(); render();
@@ -1687,6 +1951,7 @@ $('searchIn').addEventListener('input', e=>{
 const obsTimers = {};
 document.addEventListener('input', e=>{
   const el = e.target;
+  if(pState && el.closest && el.closest('#sheet') && (el.id==='pTotal'||el.id==='pNota'||el.dataset.pm!==undefined||el.dataset.pf!==undefined)){ planInput(el); return; }
   if(el.dataset.inp!=='obs') return;
   const id = el.dataset.id, c = store.cuentas[id];
   c.obs = el.value;
