@@ -269,6 +269,7 @@
   .plan-row .inp{padding:10px 8px;font-size:13.5px;min-width:0;}
   .mini-btn.on{background:var(--accent);border-color:var(--accent);color:#1a1006;}
   .plan-sum{margin-top:10px;}
+  .c-dias small.est{font-family:inherit;font-size:10px;font-weight:700;opacity:.75;}
   .plan-tag{font-size:10.5px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.04em;}
   .btn-row.tight{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}
   .banner.undo{background:var(--ok-bg);border-color:rgba(79,180,119,.4);color:var(--ok);}
@@ -352,12 +353,12 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.0';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
 // v1: inicial · v2: teléfonos agregados (telefonos/telActivo) y columnas extra (extras)
-const SCHEMA = 4; // v3: fecha de vencimiento (vence) · v4: planes de pago (planes)
+const SCHEMA = 5; // v3: fecha de vencimiento (vence) · v4: planes de pago (planes) · v5: datosAl (fecha de la última carga)
 const TEL_QUIEN = ['Cliente','Familiar','Referencia','Otro'];
 
 const GESTION_TIPOS = ['Llamada','WhatsApp','Visita','Otro'];
@@ -697,7 +698,7 @@ function uid(){ return Date.now().toString(36) + Math.random().toString(36).slic
 function nuevaCuenta(data, nowIso){
   const c = {id:data.id};
   for(const k of DATA_KEYS) c[k] = data[k]!==undefined ? data[k] : DATA_DEFAULTS[k];
-  Object.assign(c, {alta:nowIso, actualizado:nowIso, assign:'', visita:'pendiente', obs:'', obsAt:'',
+  Object.assign(c, {alta:nowIso, actualizado:nowIso, datosAl:nowIso, assign:'', visita:'pendiente', obs:'', obsAt:'',
     historial:[], compromisos:[], planes:[], archivada:null, telefonos:[], telActivo:'', extras:Object.assign({}, data.extras||{})});
   c.historial.unshift({id:uid(), ts:nowIso, tipo:'Sistema', auto:true,
     resultado:'', comentario:'Alta en seguimiento · '+(c.status||'')+' · '+c.dias+' días de atraso'});
@@ -713,7 +714,7 @@ function applyMerge(store, plan, nowIso){
     const c = store.cuentas[it.id];
     for(const k of DATA_KEYS) if(it.data[k] !== undefined) c[k] = it.data[k];
     if(it.data.extras) c.extras = Object.assign({}, c.extras||{}, it.data.extras);
-    c.actualizado = nowIso;
+    c.actualizado = nowIso; c.datosAl = nowIso;
     if(it.cambios.length){
       c.historial.unshift({id:uid(), ts:nowIso, tipo:'Sistema', auto:true, resultado:'', comentario:it.cambios.join(' · ')});
     }
@@ -749,6 +750,8 @@ function migrate(raw){
     if(!c.extras || typeof c.extras!=='object') c.extras = {};
     // v4: planes de pago
     if(!Array.isArray(c.planes)) c.planes = [];
+    // v5: fecha de la última carga de datos (para estimar días de atraso)
+    if(!c.datosAl) c.datosAl = c.alta;
     if(c.tel) c.tel = limpiaTel(c.tel);
   }
   // --- Aquí van las transformaciones de versiones futuras, por ejemplo:
@@ -891,6 +894,37 @@ function compEstado(comp, hoy){
   if(comp.fecha === hoy) return 'hoy';
   return 'futuro';
 }
+// Días de atraso estimados: los días de la última carga + los días que han pasado,
+// porque si la cuenta sigue en seguimiento es que no se ha resuelto.
+// - Del día con fecha de vencimiento: empieza a contar después de esa fecha.
+// - Se detiene si se registró un pago después de la carga (gestión "Pagó" o compromiso cumplido).
+function pagoRegistrado(c){
+  const base = new Date(c.datosAl || c.alta || 0);
+  return (c.historial||[]).some(h => new Date(h.ts) > base &&
+    ((GESTION_TIPOS.includes(h.tipo) && h.resultado==='Pagó') || (h.tipo==='Compromiso' && h.resultado==='Cumplido')));
+}
+function diasEstimados(c, now){
+  const d = Number(c.dias)||0;
+  if(c.archivada || pagoRegistrado(c)) return d;
+  now = now || new Date();
+  const carga = new Date(c.datosAl || c.alta);
+  if(isNaN(carga)) return d;
+  if(d === 0){
+    if(c.vence){
+      const [y,m,dd] = String(c.vence).split('-').map(Number);
+      return y ? Math.max(0, dayDiff(new Date(y, m-1, dd), now)) : 0;
+    }
+    return Math.max(0, dayDiff(carga, now));
+  }
+  return d + Math.max(0, dayDiff(carga, now));
+}
+// Copia de la cuenta con días/estatus estimados para mostrar (no cambia lo guardado).
+function efectiva(c, now){
+  const est = diasEstimados(c, now), d = Number(c.dias)||0;
+  if(est === d) return c;
+  return Object.assign({}, c, {dias:est, diasCargados:d, diasEst:true,
+    status: est > 0 && !normKey(c.status).includes('mora') ? 'Mora' : c.status});
+}
 function esMora(c){ return normKey(c.status).includes('mora'); }
 // Tramo de atraso para el color de la tarjeta: 'dia' (0 días), 'm1' (1-7), 'm8' (8 o más).
 // Si el status dice Mora pero trae 0 días, se trata como 1-7.
@@ -956,7 +990,7 @@ function saveData(){
 saveData();
 try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist(); }catch(e){}
 
-function cuentasList(){ return Object.values(store.cuentas).filter(c=>c && typeof c==='object' && c.id); }
+function cuentasList(){ return Object.values(store.cuentas).filter(c=>c && typeof c==='object' && c.id).map(c=>efectiva(c)); }
 
 /* ---------- Estado de la vista ---------- */
 const FILTROS = [
@@ -1151,13 +1185,13 @@ function lineaHtml(c){
   const tr = tramo(c);
   const pill = `<span class="pill tramo-${tr}">${TRAMO_LBL[tr]}</span>`;
   if(!dias && !saldo) return `<div class="c-line">${pill}<span class="c-ok">Al corriente</span></div>`;
-  return `<div class="c-line">${pill}<span class="c-dias">${dias} ${dias===1?'día':'días'}</span><span class="c-saldo">${esc(fmtMoney(saldo))} <small>en atraso</small></span></div>`;
+  return `<div class="c-line">${pill}<span class="c-dias">${dias} ${dias===1?'día':'días'}${c.diasEst?' <small class="est">est.</small>':''}</span>${saldo?`<span class="c-saldo">${esc(fmtMoney(saldo))} <small>en atraso</small></span>`:''}</div>`;
 }
 function datosHtml(c){
   const kv = [
     ['Crédito', '#'+c.id], ['Oficina', c.oficina||'—'], ['Núm. pago', c.pago||'—'],
     ['Saldo insoluto', fmtMoney(c.insoluto)], ['Saldo en atraso', fmtMoney(c.saldo)], ['Multa', fmtMoney(c.multa||0)],
-    ['Días de atraso', String(c.dias||0)], ['Próximo pago', c.vence ? fmtFecha(c.vence) : '—'],
+    ['Días de atraso', c.diasEst ? `${c.dias} (estimado · ${c.diasCargados} al ${fmtFecha(todayKey(new Date(c.datosAl)))})` : String(c.dias||0)], ['Próximo pago', c.vence ? fmtFecha(c.vence) : '—'],
     ['En seguimiento desde', fmtTs(c.alta)],
   ];
   const ex = Object.entries(c.extras||{}).filter(([k,v])=>String(v).trim()!=='');
@@ -1485,7 +1519,7 @@ function closeComp(id, cid, estado){
 let pState = null;
 function addDays(ymd, n){ const [y,m,d] = ymd.split('-').map(Number); return todayKey(new Date(y, m-1, d+n)); }
 function openPlan(id){
-  const c = store.cuentas[id]; if(!c) return;
+  const c = store.cuentas[id] && efectiva(store.cuentas[id]); if(!c) return;
   const activo = (c.planes||[]).find(p=>p.estado==='activo');
   if(activo && !confirm('Esta cuenta ya tiene un plan activo. Si haces uno nuevo, los pagos pendientes del plan anterior se cancelan. ¿Continuar?')) return;
   const condona = puedeCondonar(c);
@@ -1496,7 +1530,7 @@ function openPlan(id){
   renderPlan();
 }
 function renderPlan(){
-  const c = store.cuentas[pState.id];
+  const c = efectiva(store.cuentas[pState.id]);
   const tercero = esTercero(c), tel = telActivo(c);
   const puedeWA = !tercero && limpiaTel(tel).length === 10;
   const resto = pState.pagos.find(p=>p.resto);
@@ -1556,7 +1590,7 @@ function planInput(el){
   else if(el.dataset.pm !== undefined){ const p = pState.pagos[+el.dataset.pm]; if(!p.resto){ p.monto = el.value===''?'':parseMonto(el.value); planRecalc(); } }
   else if(el.dataset.pf !== undefined){ pState.pagos[+el.dataset.pf].fecha = el.value; }
   else if(el.id==='pCond'){
-    const c = store.cuentas[pState.id];
+    const c = efectiva(store.cuentas[pState.id]);
     pState.condona = el.checked;
     if(!pState.totalManual) pState.total = planTotalSugerido(c, pState.condona);
     planResto(pState.pagos, pState.total); renderPlan();
@@ -1599,7 +1633,7 @@ function savePlan(enviar){
       c.historial.unshift({id:uid(), ts:now, tipo:'Plan', auto:true, resultado:'Plan anterior cancelado (reemplazado)', comentario:''});
     }
   }
-  const condona = !!(pState.condona && puedeCondonar(c));
+  const condona = !!(pState.condona && puedeCondonar(efectiva(c)));
   const plan = {id:uid(), creado:now, total:Math.round((pagos.reduce((s,p)=>s+p.monto,0))*100)/100,
     condona, multa: condona ? Number(c.multa)||0 : 0, nota:pState.nota.trim(), estado:'activo', pagos};
   c.planes.push(plan);

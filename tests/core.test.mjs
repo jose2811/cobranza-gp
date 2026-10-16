@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const code = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
 const C = new Function(code + `; return {APP_VERSION, STORE_KEY, SCHEMA, DEFAULT_AJUSTES, parseMonto, parseInput, planMerge,
-  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo, parseFecha, cuandoTexto, puedeCondonar, planTotalSugerido, planResto, planMensaje, evaluarPlan};`)();
+  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo, parseFecha, cuandoTexto, puedeCondonar, planTotalSugerido, planResto, planMensaje, evaluarPlan, diasEstimados, efectiva};`)();
 
 let ok = 0;
 const t = (name, fn) => { fn(); ok++; console.log('✓', name); };
@@ -15,7 +15,7 @@ const R1 = ['900000001','Mora','CI-PRUEBA','CLIENTE PRUEBA UNO',' $20,212.33 ','
 const R2 = ['900000002','Del Dia','CI-PRUEBA','MARÍA PRUEBA DOS',' $19,566.79 ',' $-   ',' $-   ','0','4 de 8','0000000002','20.6800000','-103.3600000','AV INVENTADA 45, COLONIA EJEMPLO'];
 const tsv = rows => rows.map(r=>r.join('\t')).join('\n');
 
-t('clave fija y esquema', ()=>{ assert.equal(C.STORE_KEY,'cobranza_gp_datos'); assert.equal(C.SCHEMA,4); });
+t('clave fija y esquema', ()=>{ assert.equal(C.STORE_KEY,'cobranza_gp_datos'); assert.equal(C.SCHEMA,5); });
 
 t('montos', ()=>{
   assert.equal(C.parseMonto(' $20,212.33 '), 20212.33);
@@ -173,7 +173,7 @@ t('migración v1 → v2 agrega campos sin borrar', ()=>{
   const v1 = {schema:1, cuentas:{'900000004':{id:'900000004', tel:'523300000000', historial:[{tipo:'Visita'}], compromisos:[]}}};
   const m = C.migrate(v1);
   const c = m.cuentas['900000004'];
-  assert.equal(m.schema,4); assert.deepEqual(c.telefonos,[]); assert.equal(c.telActivo,''); assert.deepEqual(c.extras,{});
+  assert.equal(m.schema,5); assert.deepEqual(c.telefonos,[]); assert.equal(c.telActivo,''); assert.deepEqual(c.extras,{});
   assert.equal(c.tel,'3300000000'); assert.equal(c.historial.length,1);
 });
 
@@ -329,6 +329,31 @@ t('plan de pago: condonación, resto, mensaje y evaluación', ()=>{
   cuenta.compromisos[1].estado='cumplido'; assert.equal(C.evaluarPlan(cuenta, plan), 'cumplido');
   cuenta.compromisos[1].estado='incumplido'; assert.equal(C.evaluarPlan(cuenta, plan), 'incumplido');
   assert.deepEqual(C.migrate({schema:3, cuentas:{'1':{id:'1'}}}).cuentas['1'].planes, []);
+});
+
+t('días de atraso estimados', ()=>{
+  const carga = new Date(2026,9,15,9).toISOString();
+  const man = new Date(2026,9,16,10), pasado = new Date(2026,9,17,10);
+  const mora = {status:'Mora', dias:7, datosAl:carga, historial:[]};
+  assert.equal(C.diasEstimados(mora, new Date(2026,9,15,22)), 7);
+  assert.equal(C.diasEstimados(mora, man), 8);
+  const e = C.efectiva(mora, man); assert.equal(e.dias, 8); assert.equal(e.diasEst, true); assert.equal(mora.dias, 7, 'no cambia lo guardado');
+  const dia = {status:'Del Dia', dias:0, datosAl:carga, historial:[]};
+  assert.equal(C.diasEstimados(dia, man), 1);
+  assert.equal(C.efectiva(dia, man).status, 'Mora');
+  const conFecha = {status:'Del Dia', dias:0, datosAl:carga, vence:'2026-10-19', historial:[]};
+  assert.equal(C.diasEstimados(conFecha, pasado), 0);
+  assert.equal(C.diasEstimados(conFecha, new Date(2026,9,21,10)), 2);
+  const pago = {status:'Mora', dias:7, datosAl:carga, historial:[{tipo:'Visita', resultado:'Pagó', ts:new Date(2026,9,16,12).toISOString()}]};
+  assert.equal(C.diasEstimados(pago, pasado), 7);
+  const comp = {status:'Mora', dias:7, datosAl:carga, historial:[{tipo:'Compromiso', resultado:'Cumplido', auto:true, ts:new Date(2026,9,16,12).toISOString()}]};
+  assert.equal(C.diasEstimados(comp, pasado), 7);
+  assert.equal(C.diasEstimados({...mora, archivada:{}}, pasado), 7);
+  // recarga: datosAl se renueva y se usan los días reales
+  const store = C.migrate(null);
+  C.applyMerge(store, C.planMerge(store, C.parseInput(tsv([HEAD,R1]))), carga);
+  assert.equal(store.cuentas['900000001'].datosAl, carga);
+  assert.equal(C.migrate({schema:4, cuentas:{'1':{id:'1', alta:carga}}}).cuentas['1'].datosAl, carga);
 });
 
 console.log(`\n${ok} pruebas OK`);
