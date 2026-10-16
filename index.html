@@ -270,6 +270,7 @@
   .mini-btn.on{background:var(--accent);border-color:var(--accent);color:#1a1006;}
   .plan-sum{margin-top:10px;}
   .c-dias small.est{font-family:inherit;font-size:10px;font-weight:700;opacity:.75;}
+  .pago-btn{width:100%;margin-top:8px;background:var(--ok-bg);border-color:rgba(79,180,119,.5);color:var(--ok);}
   .card.ronda{opacity:.55;}
   .card.ronda.open{opacity:1;}
   .card.ronda .c-name::before{content:'✓ ';color:var(--ok);}
@@ -320,6 +321,7 @@
     </div>
     <div class="head-btns">
       <button class="icon-btn primary" data-act="open-import">＋ Agregar</button>
+      <button class="icon-btn" data-act="open-reporte" aria-label="Reporte al gerente">📤</button>
       <button class="icon-btn" data-act="open-ajustes" aria-label="Ajustes">⚙︎</button>
     </div>
   </div>
@@ -360,7 +362,7 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.11.0';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
@@ -381,6 +383,7 @@ const MOTIVOS_ARCHIVO = ['Liquidó','Se regularizó','Regresa al gerente/asesor'
 // Sin montos ni días de atraso. A terceros NUNCA se menciona adeudo, atraso ni pagos.
 const DEFAULT_AJUSTES = {
   nombre: "José Fernández",
+  gerentes: {},   // teléfono del gerente por oficina, para el reporte
   // Al corriente: las versiones con {cuando} se usan si la cuenta trae fecha de vencimiento (hoy o próxima);
   // las que no lo traen, cuando no hay fecha.
   tplDelDia: [
@@ -735,6 +738,7 @@ function migrate(raw){
   const out = Object.assign({}, d);
   out.cuentas = (d.cuentas && typeof d.cuentas==='object') ? d.cuentas : {};
   out.ajustes = Object.assign({}, DEFAULT_AJUSTES, (d.ajustes && typeof d.ajustes==='object') ? d.ajustes : {});
+  if(!out.ajustes.gerentes || typeof out.ajustes.gerentes!=='object') out.ajustes.gerentes = {};
   for(const k of Object.keys(OLD_DEFAULTS)) if(OLD_DEFAULTS[k].includes(out.ajustes[k])) out.ajustes[k] = DEFAULT_AJUSTES[k];
   if(!('ultimoRespaldo' in out)) out.ultimoRespaldo = null;
   const nowIso = new Date().toISOString();
@@ -797,6 +801,65 @@ function money2(n){
   n = Number(n)||0;
   return '$' + n.toLocaleString('es-MX', {minimumFractionDigits: n%1 ? 2 : 0, maximumFractionDigits: 2});
 }
+/* ---------- Reporte al gerente ---------- */
+// Cuentas de una oficina con movimiento en el día (gestión, compromiso, plan o cierre) y las que no tuvieron contacto.
+function esDeHoy(iso, now){ const d = new Date(iso); return !isNaN(d) && dayDiff(d, now) === 0; }
+function reporteGerente(cuentas, oficina, opts){
+  opts = opts || {};
+  const now = opts.now || new Date();
+  const hoy = todayKey(now);
+  const delOf = cuentas.filter(c=>c && c.id && (!oficina || c.oficina===oficina));
+  const fecha = DIAS_SEM[now.getDay()] + ' ' + now.getDate() + ' de ' + MESES_L[now.getMonth()];
+  const bloques = [], sinContacto = [];
+  const ordenadas = delOf.slice().sort((a,b)=>(Number(efectiva(b,now).dias)||0)-(Number(efectiva(a,now).dias)||0));
+  for(const raw of ordenadas){
+    const c = efectiva(raw, now);
+    const movHoy = (c.historial||[]).filter(h=>esDeHoy(h.ts, now));
+    const gestHoy = movHoy.filter(h=>GESTION_TIPOS.includes(h.tipo));
+    const cerradaHoy = c.archivada && esDeHoy(c.archivada.ts, now);
+    if(c.archivada && !cerradaHoy) continue;
+    if(!movHoy.some(h=>!h.auto || h.tipo==='Compromiso' || h.tipo==='Plan') && !cerradaHoy){
+      if(!c.archivada) sinContacto.push(properCase(c.cliente));
+      continue;
+    }
+    const d = Number(c.dias)||0;
+    let cab = '*' + properCase(c.cliente) + '* (#' + c.id + ')';
+    cab += d ? ' · ' + d + (d===1?' día':' días') + ' · ' + money2(c.saldo) + ' en atraso' : ' · al corriente';
+    const lin = [];
+    let gs = opts.todas ? gestHoy.slice().reverse() : gestHoy.slice(0,1);
+    if(cerradaHoy) gs = gs.filter(g=>g.resultado!=='Pagó'); // el cierre ya lo dice
+    for(const g of gs){
+      const hora = new Date(g.ts).toLocaleTimeString('es-MX',{hour:'numeric',minute:'2-digit'});
+      lin.push('   • ' + hora + ' ' + g.tipo + (g.resultado?' · '+g.resultado:'') + (g.comentario?' — '+g.comentario:''));
+    }
+    if(cerradaHoy){
+      lin.push('   ✅ ' + (c.archivada.motivo==='Se regularizó' ? 'Pagó, cuenta al corriente' : c.archivada.motivo) +
+        (c.archivada.nota ? ' — ' + c.archivada.nota : ''));
+    } else {
+      const pa = (c.planes||[]).find(p=>p.estado==='activo');
+      const pend = (c.compromisos||[]).filter(x=>x.estado==='pendiente').sort((a,b)=>a.fecha<b.fecha?-1:1);
+      if(pa){
+        const cs = pend.filter(x=>x.planId===pa.id);
+        lin.push('   📋 Plan de pago: ' + cs.map(x=>fechaPlanLbl(x.fecha, now).toLowerCase() + ' ' + money2(x.monto)).join(', ') +
+          (pa.condona && pa.multa>0 ? ' (se condona multa de ' + money2(pa.multa) + ' si cumple)' : ''));
+      }
+      const sueltos = pend.filter(x=>!pa || x.planId!==pa.id);
+      for(const x of sueltos)
+        lin.push('   🤝 Compromiso: ' + money2(x.monto) + ' ' + (x.fecha<hoy ? 'VENCIDO del ' : 'para ') + fechaPlanLbl(x.fecha, now).toLowerCase());
+      const cerrados = movHoy.filter(h=>h.tipo==='Compromiso' && (h.resultado==='Cumplido' || h.resultado==='Incumplido'));
+      for(const h of cerrados) lin.push('   ' + (h.resultado==='Cumplido'?'✔️':'❌') + ' Compromiso ' + h.resultado.toLowerCase() + ': ' + h.comentario);
+      const planCerr = movHoy.filter(h=>h.tipo==='Plan' && /cumplido|incumplido/i.test(h.resultado));
+      for(const h of planCerr) lin.push('   📋 ' + h.resultado + (h.comentario?' — '+h.comentario:''));
+    }
+    bloques.push(cab + (lin.length ? '\n' + lin.join('\n') : ''));
+  }
+  let msg = 'Hola, te comparto el seguimiento de hoy, ' + fecha + (oficina ? ', de las cuentas de ' + oficina : '') + ' que estoy apoyando:\n\n';
+  msg += bloques.length ? bloques.map((b,i)=>(i+1)+'. '+b).join('\n\n') : 'Hoy no hubo gestiones registradas.';
+  if(sinContacto.length) msg += '\n\nSin contacto hoy: ' + sinContacto.join(', ') + '.';
+  msg += '\n\nCualquier cosa me dices. ¡Gracias!';
+  return {msg, n: bloques.length, sinContacto: sinContacto.length};
+}
+
 function fechaPlanLbl(ymd, now){
   const [y,m,d] = String(ymd).split('-').map(Number);
   const f = new Date(y, m-1, d); now = now || new Date();
@@ -1313,6 +1376,7 @@ function cardHtml(c, pos, hoy){
         <button class="btn" data-act="plan" data-id="${id}">📋 Plan</button>
         <button class="btn" data-act="archivar" data-id="${id}">🗂 Archivar</button>
       </div>
+      <button class="btn pago-btn" data-act="pago-cerrar" data-id="${id}">✓ Pagó y cerrar</button>
 
       <div class="section">${datosHtml(c)}</div>
 
@@ -1742,6 +1806,90 @@ function saveArchivar(id){
   saveData(); closeSheet(); clearRoute(); render(); toast('Cuenta archivada');
 }
 
+/* Pagó y cerrar: registra el pago y archiva como "Se regularizó" */
+function openPagoCerrar(id){
+  const c = store.cuentas[id]; if(!c) return;
+  const pend = (c.compromisos||[]).filter(x=>x.estado==='pendiente').length;
+  openSheet(`
+    <h2>✓ Pagó y cerrar</h2>
+    <div class="sh-sub">${esc(properCase(c.cliente))} · se registra el pago y la cuenta se archiva como “Se regularizó”.</div>
+    <div class="section"><div class="field-label">Comentario (opcional)</div>
+      <textarea class="inp" id="pcCom" placeholder="Ej. pagó $2,045 en sucursal, ficha recibida"></textarea></div>
+    ${pend?`<label class="check"><input type="checkbox" id="pcComp" checked> Marcar ${pend} ${pend===1?'compromiso pendiente':'compromisos pendientes'} como cumplido${pend===1?'':'s'}</label>`:''}
+    <div class="btn-row">
+      <button class="btn" data-act="sheet-close">Cancelar</button>
+      <button class="btn primary" data-act="pc-save" data-id="${esc(id)}">Pagó · cerrar cuenta</button>
+    </div>`);
+}
+function savePagoCerrar(id){
+  const c = store.cuentas[id]; if(!c) return closeSheet();
+  const com = $('pcCom').value.trim();
+  const now = new Date().toISOString();
+  if($('pcComp') && $('pcComp').checked){
+    c.compromisos.filter(x=>x.estado==='pendiente').forEach(x=>{
+      x.estado = 'cumplido'; x.cerrado = now;
+      c.historial.unshift({id:uid(), ts:now, tipo:'Compromiso', auto:true, resultado:'Cumplido', comentario:`${money2(x.monto)} del ${fmtFecha(x.fecha)}`});
+    });
+    (c.planes||[]).filter(p=>p.estado==='activo').forEach(p=>{
+      p.estado = 'cumplido'; p.cerrado = now;
+      const cond = p.condona && p.multa>0;
+      c.historial.unshift({id:uid(), ts:now, tipo:'Plan', auto:true, resultado: cond ? 'Plan cumplido · condonación PROCEDE' : 'Plan cumplido',
+        comentario: cond ? `Multa de ${money2(p.multa)} — aplicar la condonación` : ''});
+    });
+  }
+  c.historial.unshift({id:uid(), ts:now, tipo:'Otro', resultado:'Pagó', comentario:com});
+  c.archivada = {ts:now, motivo:'Se regularizó', nota:com};
+  c.historial.unshift({id:uid(), ts:now, tipo:'Archivo', auto:true, resultado:'Archivada · Se regularizó', comentario:''});
+  openDetails.delete(c.id);
+  saveData(); closeSheet(); clearRoute(); render(); toast('Pago registrado · cuenta cerrada');
+}
+
+/* Reporte al gerente */
+let rState = null;
+function openReporte(){
+  const ofs = [...new Set(cuentasList().map(c=>c.oficina).filter(Boolean))].sort();
+  if(!ofs.length){ toast('No hay cuentas'); return; }
+  if(!rState) rState = {oficina: oficinaSel || ofs[0], todas:false};
+  if(!ofs.includes(rState.oficina)) rState.oficina = ofs[0];
+  renderReporte(ofs);
+}
+function renderReporte(ofs){
+  ofs = ofs || [...new Set(cuentasList().map(c=>c.oficina).filter(Boolean))].sort();
+  const r = reporteGerente(Object.values(store.cuentas), rState.oficina, {todas:rState.todas});
+  const tel = (store.ajustes.gerentes||{})[rState.oficina] || '';
+  openSheet(`
+    <h2>📤 Reporte al gerente</h2>
+    <div class="sh-sub">Lo trabajado hoy: ${r.n} ${r.n===1?'cuenta':'cuentas'} con movimiento${r.sinContacto?' · '+r.sinContacto+' sin contacto':''}.</div>
+    <div class="section"><div class="field-label">Oficina</div>
+      <select class="status-select" id="rOf">${ofs.map(o=>`<option ${o===rState.oficina?'selected':''}>${esc(o)}</option>`).join('')}</select></div>
+    <div class="section"><div class="field-label">WhatsApp del gerente (se guarda para esta oficina)</div>
+      <input class="inp" id="rTel" type="tel" inputmode="numeric" value="${esc(tel)}" placeholder="10 dígitos (opcional)"></div>
+    <label class="check"><input type="checkbox" id="rTodas" ${rState.todas?'checked':''}> Incluir todas las gestiones del día (no solo la última)</label>
+    <div class="section"><div class="field-label">Mensaje</div>
+      <textarea class="inp" id="rMsg" rows="12">${esc(r.msg)}</textarea>
+      <div class="help">Puedes editarlo antes de enviar.</div></div>
+    <div class="btn-row">
+      <button class="btn" data-act="r-copy">Copiar</button>
+      <button class="btn primary" data-act="r-send">💬 Enviar por WhatsApp</button>
+    </div>
+    <div class="btn-row"><button class="btn" data-act="sheet-close">Cerrar</button></div>`);
+}
+function guardarTelGerente(){
+  const t = limpiaTel($('rTel').value);
+  store.ajustes.gerentes = store.ajustes.gerentes || {};
+  if(t.length===10) store.ajustes.gerentes[rState.oficina] = t;
+  else if(!t) delete store.ajustes.gerentes[rState.oficina];
+  saveData();
+  return t;
+}
+function enviarReporte(){
+  const t = guardarTelGerente();
+  if(t && t.length!==10){ toast('El teléfono debe tener 10 dígitos'); return; }
+  const msg = $('rMsg').value;
+  const url = (t ? 'https://wa.me/52' + t : 'https://wa.me/') + '?text=' + encodeURIComponent(msg);
+  window.open(url, '_blank', 'noopener');
+}
+
 /* Importar */
 let lastPlan = null;
 function openImport(){
@@ -1988,6 +2136,11 @@ document.addEventListener('click', e=>{
     case 'plan-reenviar': reenviarPlan(id, el.dataset.pid); break;
     case 'comp-close': closeComp(id, el.dataset.cid, el.dataset.estado); break;
     case 'archivar': openArchivar(id); break;
+    case 'pago-cerrar': openPagoCerrar(id); break;
+    case 'pc-save': savePagoCerrar(id); break;
+    case 'open-reporte': openReporte(); break;
+    case 'r-send': enviarReporte(); break;
+    case 'r-copy': copyAddr(el, $('rMsg').value); setTimeout(()=>{ el.textContent='Copiar'; }, 1900); break;
     case 'a-motivo':
       aMotivo = el.dataset.m;
       document.querySelectorAll('#aMotivos button').forEach(b=>b.classList.toggle('on', b===el));
@@ -2026,6 +2179,11 @@ document.addEventListener('click', e=>{
 document.addEventListener('change', e=>{
   const el = e.target;
   if(pState && el.id==='pCond'){ planInput(el); return; }
+  if(rState && sheetOpen && (el.id==='rOf' || el.id==='rTodas')){
+    guardarTelGerente();
+    if(el.id==='rOf') rState.oficina = el.value; else rState.todas = el.checked;
+    renderReporte(); return;
+  }
   if(el.dataset.chg==='visita'){
     const c = store.cuentas[el.dataset.id]; c.visita = el.value; c.actualizado = new Date().toISOString();
     saveData(); render();

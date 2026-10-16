@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const code = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
 const C = new Function(code + `; return {APP_VERSION, STORE_KEY, SCHEMA, DEFAULT_AJUSTES, parseMonto, parseInput, planMerge,
-  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo, parseFecha, cuandoTexto, puedeCondonar, planTotalSugerido, planResto, planMensaje, evaluarPlan, diasEstimados, efectiva, atendidaRonda, cuandoCorto};`)();
+  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo, parseFecha, cuandoTexto, puedeCondonar, planTotalSugerido, planResto, planMensaje, evaluarPlan, diasEstimados, efectiva, atendidaRonda, cuandoCorto, reporteGerente};`)();
 
 let ok = 0;
 const t = (name, fn) => { fn(); ok++; console.log('✓', name); };
@@ -364,6 +364,36 @@ t('ronda: atendida en las últimas 3 horas', ()=>{
   assert.equal(C.atendidaRonda({historial:[{tipo:'Sistema', auto:true, ts:now.toISOString()}]}, now), false);
   assert.ok(C.cuandoCorto(new Date(2026,9,16,9,5).toISOString(), now).startsWith('hoy'));
   assert.ok(C.cuandoCorto(new Date(2026,9,15,9,5).toISOString(), now).startsWith('ayer'));
+});
+
+t('reporte al gerente', ()=>{
+  const now = new Date(2026,9,16,17,0);
+  const ts = (h,m)=>new Date(2026,9,16,h,m).toISOString();
+  const base = (id, nom, extra)=>Object.assign({id, oficina:'CI-PRUEBA', cliente:nom, status:'Mora', dias:5, saldo:4045, multa:928,
+    datosAl:ts(8,0), alta:ts(8,0), historial:[], compromisos:[], planes:[], archivada:null}, extra);
+  const cuentas = [
+    base('900000071','ANA PRUEBA UNO',{historial:[
+      {tipo:'WhatsApp', ts:ts(16,0), resultado:'Promesa de pago', comentario:'paga mañana'},
+      {tipo:'Compromiso', auto:true, ts:ts(16,1), resultado:'Registrado', comentario:'x'},
+      {tipo:'Llamada', ts:ts(10,0), resultado:'No contesta', comentario:''}],
+      compromisos:[{id:'k', fecha:'2026-10-17', monto:2000, estado:'pendiente'}]}),
+    base('900000072','LUIS PRUEBA DOS',{archivada:{ts:ts(15,0), motivo:'Se regularizó', nota:'pagó en sucursal'},
+      historial:[{tipo:'Otro', ts:ts(15,0), resultado:'Pagó', comentario:'pagó en sucursal'}]}),
+    base('900000073','EVA PRUEBA TRES',{}),
+    base('900000074','OTRA OFICINA',{oficina:'CI-DEMO', historial:[{tipo:'Llamada', ts:ts(11,0), resultado:'Contactado'}]}),
+    base('900000075','VIEJA ARCHIVADA',{archivada:{ts:new Date(2026,9,10).toISOString(), motivo:'Liquidó'}}),
+  ];
+  const r = C.reporteGerente(cuentas, 'CI-PRUEBA', {now});
+  assert.equal(r.n, 2); assert.equal(r.sinContacto, 1);
+  assert.ok(r.msg.includes('viernes 16 de octubre') && r.msg.includes('CI-PRUEBA'), r.msg);
+  assert.ok(r.msg.includes('*Ana Prueba Uno* (#900000071)') && r.msg.includes('Promesa de pago — paga mañana'), r.msg);
+  assert.ok(!r.msg.includes('No contesta'), 'solo la última gestión');
+  assert.ok(r.msg.includes('🤝 Compromiso: $2,000 para mañana sábado 17'), r.msg);
+  assert.ok(r.msg.includes('✅ Pagó, cuenta al corriente — pagó en sucursal'), r.msg);
+  assert.ok(r.msg.includes('Sin contacto hoy: Eva Prueba Tres.'), r.msg);
+  assert.ok(!r.msg.includes('Otra Oficina') && !r.msg.includes('Vieja Archivada'));
+  const todas = C.reporteGerente(cuentas, 'CI-PRUEBA', {now, todas:true});
+  assert.ok(todas.msg.indexOf('No contesta') < todas.msg.indexOf('Promesa de pago'), 'orden cronológico');
 });
 
 console.log(`\n${ok} pruebas OK`);
