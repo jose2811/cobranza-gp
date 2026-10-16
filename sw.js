@@ -1,7 +1,7 @@
 // Service worker de Cobranza GP — "red primero":
 // siempre intenta bajar la versión más nueva; si no hay señal, usa la copia guardada.
 // Solo guarda en caché los archivos de la app (nunca datos de clientes: esos viven en localStorage).
-const CACHE = 'cobranza-gp-v1.1.0';
+const CACHE = 'cobranza-gp-v1.2.0';
 const ASSETS = ['./', './index.html', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', e => {

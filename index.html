@@ -257,6 +257,7 @@
   .c-head .assign-chip{flex:0 0 auto;}
   .c-head .order-badge{margin-top:1px;}
   .flags{padding:0 14px 11px;}
+  .act-btn small{font-size:10px;opacity:.8;}
   .flag.blue{background:var(--blue-bg);color:var(--blue);}
   .note-strip .nt{-webkit-line-clamp:2;}
   .kv-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
@@ -334,7 +335,7 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
@@ -352,7 +353,10 @@ const MOTIVOS_ARCHIVO = ['Liquidó','Se regularizó','Regresa al gerente/asesor'
 const DEFAULT_AJUSTES = {
   nombre: "José Fernández",
   tplDelDia: "Hola {nombre}, buen día. Soy {yo} de Crediclub. Le escribo para recordarle que hoy es su día de pago. Cualquier duda, con gusto le apoyo.",
-  tplMora: "Hola {nombre}, buen día. Soy {yo} de Crediclub. Le escribo porque tengo registrado un pago pendiente en su crédito y quiero apoyarle a regularizarlo. ¿Tiene un momento para platicar?"
+  tplMora: "Hola {nombre}, buen día. Soy {yo} de Crediclub. Le escribo porque tengo registrado un pago pendiente en su crédito y quiero apoyarle a regularizarlo. ¿Tiene un momento para platicar?",
+  // Terceros (familiar / referencia): NUNCA mencionar adeudo, atraso, montos ni pagos.
+  tplTerceroDia: "Hola, buen día. Soy {yo} de Crediclub. Este número nos fue proporcionado como contacto de {cliente}. ¿Me podría apoyar pidiéndole que se comunique conmigo a este número? Muchas gracias.",
+  tplTerceroMora: "Hola, buen día. Soy {yo} de Crediclub. Este número nos fue proporcionado como referencia de {cliente} y necesito comunicarme con él/ella por un tema importante. ¿Me podría apoyar pidiéndole que me contacte a este número? Muchas gracias."
 };
 
 // Columnas en el orden por defecto (cuando no viene encabezado) y nombres que se reconocen.
@@ -596,20 +600,29 @@ function migrate(raw){
   return out;
 }
 
-// WhatsApp: idéntico al HTML original; textos y nombre salen de Ajustes.
-function waUrl(c, aj){
+// WhatsApp: para el titular, idéntico al HTML original. Para terceros usa sus propias plantillas.
+// {nombre} = primer nombre del cliente · {cliente} = nombre completo · {yo} = mi nombre
+function properCase(s){ return String(s||'').trim().toLowerCase().replace(/(^|\s)(\S)/g,(m,a,b)=>a+b.toUpperCase()); }
+function waUrl(c, aj, tercero){
   const num = String(c.tel||'').replace(/\D/g,'');
   if(num.length !== 10) return null;
   const first = (c.cliente||'').trim().split(/\s+/)[0] || '';
   const nombre = first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
-  const tpl = (c.status||'').toLowerCase().includes('mora') ? aj.tplMora : aj.tplDelDia;
-  const msg = tpl.replace('{nombre}', nombre).replace('{yo}', aj.nombre);
+  const mora = (c.status||'').toLowerCase().includes('mora');
+  const tpl = tercero ? (mora ? aj.tplTerceroMora : aj.tplTerceroDia) : (mora ? aj.tplMora : aj.tplDelDia);
+  const msg = tpl.replace('{nombre}', nombre).replace('{yo}', aj.nombre).replace('{cliente}', properCase(c.cliente));
   return 'https://wa.me/52' + num + '?text=' + encodeURIComponent(msg);
 }
 
 // Teléfono que se usa para llamar y WhatsApp: el agregado "en uso" o, si no hay, el de la lista.
 function telActivo(c){ return c.telActivo || c.tel || ''; }
 // Número para la app de teléfono: solo los 10 dígitos, sin +52.
+// ¿El teléfono en uso es de alguien que no es el titular? (familiar, referencia, otro)
+function esTercero(c){
+  if(!c.telActivo) return false;
+  const t = (c.telefonos||[]).find(x=>x.num===c.telActivo);
+  return !!(t && t.quien && t.quien!=='Cliente');
+}
 function telMarcar(n){ return limpiaTel(n); }
 function fmtTel(n){ const d = limpiaTel(n); return d.length===10 ? d.slice(0,2)+' '+d.slice(2,6)+' '+d.slice(6) : d; }
 
@@ -906,7 +919,8 @@ function cardHtml(c, pos, hoy){
 
   const vmeta = statusMeta(c.visita);
   const tel = telActivo(c);
-  const wa = waUrl(Object.assign({}, c, {tel}), store.ajustes);
+  const tercero = esTercero(c);
+  const wa = waUrl(Object.assign({}, c, {tel}), store.ajustes, tercero);
   const obs = (c.obs||'').trim();
   return `<div class="card st-${vmeta.cls.replace('visita-','')} ${open}">
     <div class="c-head" data-act="toggle" data-id="${id}">
@@ -922,7 +936,7 @@ function cardHtml(c, pos, hoy){
     <div class="actions">
       ${tel ? `<a class="act-btn call" href="tel:${esc(telMarcar(tel))}" data-act="call" data-id="${id}"><span class="ic">📞</span>Llamar</a>`
             : `<span class="act-btn call disabled"><span class="ic">📞</span>Sin tel.</span>`}
-      ${wa ? `<a class="act-btn wa" href="${esc(wa)}" target="_blank" rel="noopener" data-act="wa" data-id="${id}"><span class="ic">💬</span>WhatsApp</a>`
+      ${wa ? `<a class="act-btn wa" href="${esc(wa)}" target="_blank" rel="noopener" data-act="wa" data-id="${id}"><span class="ic">💬</span>WhatsApp${tercero?' <small>(tercero)</small>':''}</a>`
            : `<span class="act-btn wa disabled"><span class="ic">💬</span>Sin WhatsApp</span>`}
       ${hasCoords(c) ? `<a class="act-btn nav" href="${esc(navUrl(c.lat,c.lng))}" target="_blank" rel="noopener"><span class="ic">🧭</span>Ir al punto</a>`
                      : `<span class="act-btn nav disabled"><span class="ic">🧭</span>Sin ubicación</span>`}
@@ -1267,9 +1281,13 @@ function openAjustes(){
     <h2>Ajustes</h2>
     <div class="sh-sub">Se guardan solo en este teléfono.</div>
     <div class="section"><div class="field-label">Mi nombre (para WhatsApp)</div><input class="inp" id="ajNombre" value="${esc(aj.nombre)}"></div>
-    <div class="section"><div class="field-label">Mensaje para “Del día”</div><textarea class="inp" id="ajDia" rows="4">${esc(aj.tplDelDia)}</textarea></div>
-    <div class="section"><div class="field-label">Mensaje para “Mora”</div><textarea class="inp" id="ajMora" rows="4">${esc(aj.tplMora)}</textarea>
-      <div class="help">{nombre} = primer nombre del cliente · {yo} = tu nombre. Evita poner montos o días de atraso.</div></div>
+    <div class="section"><div class="field-label">Titular · al corriente (Del día)</div><textarea class="inp" id="ajDia" rows="4">${esc(aj.tplDelDia)}</textarea></div>
+    <div class="section"><div class="field-label">Titular · en atraso (Mora)</div><textarea class="inp" id="ajMora" rows="4">${esc(aj.tplMora)}</textarea></div>
+    <div class="section"><div class="field-label">Tercera persona · al corriente</div><textarea class="inp" id="ajTDia" rows="4">${esc(aj.tplTerceroDia)}</textarea></div>
+    <div class="section"><div class="field-label">Tercera persona · en atraso</div><textarea class="inp" id="ajTMora" rows="4">${esc(aj.tplTerceroMora)}</textarea>
+      <div class="help">{nombre} = primer nombre del cliente · {cliente} = nombre completo · {yo} = tu nombre.<br>
+      Se usa la de “tercera persona” cuando el teléfono en uso es de un Familiar, Referencia u Otro.<br>
+      ⚠️ A terceros nunca menciones adeudo, atraso, montos ni pagos (reglas de cobranza CONDUSEF).</div></div>
     <div class="btn-row">
       <button class="btn" data-act="aj-default">Textos originales</button>
       <button class="btn primary" data-act="aj-save">Guardar ajustes</button>
@@ -1291,8 +1309,9 @@ function openAjustes(){
 }
 function saveAjustes(){
   const nombre = $('ajNombre').value.trim(), dia = $('ajDia').value.trim(), mora = $('ajMora').value.trim();
-  if(!nombre || !dia || !mora){ toast('No dejes campos vacíos'); return; }
-  store.ajustes.nombre = nombre; store.ajustes.tplDelDia = dia; store.ajustes.tplMora = mora;
+  const tdia = $('ajTDia').value.trim(), tmora = $('ajTMora').value.trim();
+  if(!nombre || !dia || !mora || !tdia || !tmora){ toast('No dejes campos vacíos'); return; }
+  Object.assign(store.ajustes, {nombre, tplDelDia:dia, tplMora:mora, tplTerceroDia:tdia, tplTerceroMora:tmora});
   saveData(); closeSheet(); render(); toast('Ajustes guardados');
 }
 function descargarRespaldo(){
@@ -1397,6 +1416,7 @@ document.addEventListener('click', e=>{
     case 'aj-save': saveAjustes(); break;
     case 'aj-default':
       $('ajNombre').value = DEFAULT_AJUSTES.nombre; $('ajDia').value = DEFAULT_AJUSTES.tplDelDia; $('ajMora').value = DEFAULT_AJUSTES.tplMora;
+      $('ajTDia').value = DEFAULT_AJUSTES.tplTerceroDia; $('ajTMora').value = DEFAULT_AJUSTES.tplTerceroMora;
       toast('Textos originales puestos — falta Guardar'); break;
     case 'backup': descargarRespaldo(); break;
     case 'restore': $('restFile').click(); break;

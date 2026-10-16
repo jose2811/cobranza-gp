@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const code = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
 const C = new Function(code + `; return {APP_VERSION, STORE_KEY, SCHEMA, DEFAULT_AJUSTES, parseMonto, parseInput, planMerge,
-  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar};`)();
+  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero};`)();
 
 let ok = 0;
 const t = (name, fn) => { fn(); ok++; console.log('✓', name); };
@@ -149,6 +149,22 @@ t('migración v1 → v2 agrega campos sin borrar', ()=>{
   const c = m.cuentas['900000004'];
   assert.equal(m.schema,2); assert.deepEqual(c.telefonos,[]); assert.equal(c.telActivo,''); assert.deepEqual(c.extras,{});
   assert.equal(c.tel,'3300000000'); assert.equal(c.historial.length,1);
+});
+
+t('plantillas de tercero: sin montos ni adeudo, con nombre completo', ()=>{
+  const aj = C.DEFAULT_AJUSTES;
+  const c = {tel:'0000000099', cliente:'CLIENTE PRUEBA UNO', status:'Mora', telActivo:'0000000099', telefonos:[{num:'0000000099', quien:'Familiar'}]};
+  assert.equal(C.esTercero(c), true);
+  const m = decodeURIComponent(C.waUrl(c, aj, true).split('text=')[1]);
+  assert.ok(m.includes('Cliente Prueba Uno') && m.includes('José Fernández'));
+  assert.ok(!/pago|adeudo|atraso|deuda|\$|\d/i.test(m), m);
+  const d = decodeURIComponent(C.waUrl({...c, status:'Del Dia'}, aj, true).split('text=')[1]);
+  assert.ok(!/pago|adeudo|atraso|deuda|\$|\d/i.test(d), d);
+  assert.equal(C.esTercero({telActivo:'0000000099', telefonos:[{num:'0000000099', quien:'Cliente'}]}), false);
+  assert.equal(C.esTercero({telActivo:'', telefonos:[]}), false);
+  // ajustes viejos (v1.1) reciben las plantillas nuevas al migrar
+  const mg = C.migrate({schema:2, ajustes:{nombre:'Yo', tplMora:'X'}, cuentas:{}});
+  assert.equal(mg.ajustes.tplMora,'X'); assert.equal(mg.ajustes.tplTerceroMora, aj.tplTerceroMora);
 });
 
 console.log(`\n${ok} pruebas OK`);
