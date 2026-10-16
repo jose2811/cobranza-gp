@@ -5,5 +5,5 @@
 - Cada actualización: subir `APP_VERSION` (index.html) y `CACHE` (sw.js) al mismo número; actualizar la tabla de versiones del README si aplica.
 - Si cambia la estructura de datos: subir `SCHEMA` y agregar la transformación en `migrate()`; nunca borrar campos ni cuentas. loadStore() guarda copia `cobranza_gp_datos_antes_vN` antes de migrar.
 - Sin librerías externas ni llamadas de red. Únicas salidas: wa.me, tel:, Google Maps.
-- WhatsApp: no cambiar la lógica de `waUrl()` (wa.me/52 + 10 dígitos, primer nombre, plantilla Mora vs Del día, sin montos).
+- WhatsApp: `waUrl()` = wa.me/52 + 10 dígitos, sin guardar contacto; plantilla según Mora/al corriente y titular/tercero; sin montos. A terceros nunca mencionar adeudo. Si cambian los textos por defecto, agregar los viejos a OLD_DEFAULTS.
 - Correr `node tests/core.test.mjs` antes de cada commit. Mensajes de commit en español.

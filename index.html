@@ -335,7 +335,7 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
@@ -350,13 +350,37 @@ const MOTIVOS_ARCHIVO = ['Liquidó','Se regularizó','Regresa al gerente/asesor'
 
 // Mensajes que aparecen escritos al abrir WhatsApp (se pueden editar antes de enviar).
 // {nombre} = primer nombre del cliente, {yo} = tu nombre. Sin montos ni días de atraso a propósito.
+// Varias versiones por plantilla, separadas por una línea con ---. Cada vez se elige una al azar.
+// {saludo} = Buenos días / Buenas tardes / Buenas noches según la hora
+// {nombre} = primer nombre del cliente · {cliente} = nombre completo · {yo} = mi nombre
+// Sin montos ni días de atraso. A terceros NUNCA se menciona adeudo, atraso ni pagos.
 const DEFAULT_AJUSTES = {
   nombre: "José Fernández",
-  tplDelDia: "Hola {nombre}, buen día. Soy {yo} de Crediclub. Le escribo para recordarle que hoy es su día de pago. Cualquier duda, con gusto le apoyo.",
-  tplMora: "Hola {nombre}, buen día. Soy {yo} de Crediclub. Le escribo porque tengo registrado un pago pendiente en su crédito y quiero apoyarle a regularizarlo. ¿Tiene un momento para platicar?",
-  // Terceros (familiar / referencia): NUNCA mencionar adeudo, atraso, montos ni pagos.
-  tplTerceroDia: "Hola, buen día. Soy {yo} de Crediclub. Este número nos fue proporcionado como contacto de {cliente}. ¿Me podría apoyar pidiéndole que se comunique conmigo a este número? Muchas gracias.",
-  tplTerceroMora: "Hola, buen día. Soy {yo} de Crediclub. Este número nos fue proporcionado como referencia de {cliente} y necesito comunicarme con él/ella por un tema importante. ¿Me podría apoyar pidiéndole que me contacte a este número? Muchas gracias."
+  tplDelDia: [
+    "{saludo} {nombre}, soy {yo} de Crediclub. Le escribo para recordarle su pago, si ya lo realizó muchas gracias y omita este mensaje 🙂",
+    "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Nada más para recordarle su pago; cualquier duda aquí estoy para apoyarle.",
+    "{saludo} {nombre}, le saluda {yo} de Crediclub. Le dejo el recordatorio de su pago. Que tenga excelente día."
+  ].join("\n---\n"),
+  tplMora: [
+    "{saludo} {nombre}, soy {yo} de Crediclub. Me gustaría platicar con usted sobre su crédito para ver cómo le puedo apoyar. ¿A qué hora le puedo llamar?",
+    "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Le escribo porque quiero apoyarle a ponerse al corriente con su crédito. ¿Tiene un momento para platicar?",
+    "{saludo} {nombre}, le saluda {yo} de Crediclub. Quisiera ver con usted el tema de su crédito, ¿me puede llamar o le marco yo?"
+  ].join("\n---\n"),
+  tplTerceroDia: [
+    "{saludo}, soy {yo} de Crediclub. Me dieron este número como contacto de {cliente}. ¿Le podría pedir de favor que me llame o me escriba a este número? Se lo agradezco mucho.",
+    "{saludo}, ¿cómo está? Soy {yo}, de Crediclub. Estoy tratando de comunicarme con {cliente}; ¿sería tan amable de darle mi recado para que me contacte? Muchas gracias."
+  ].join("\n---\n"),
+  tplTerceroMora: [
+    "{saludo}, soy {yo} de Crediclub. Me dieron este número como referencia de {cliente} y necesito comunicarme con {nombre}. ¿Le podría pedir de favor que me llame a este número? Se lo agradezco mucho.",
+    "{saludo}, ¿cómo está? Soy {yo}, de Crediclub. Estoy tratando de localizar a {cliente}; ¿sería tan amable de darle mi recado para que se comunique conmigo hoy? Muchas gracias."
+  ].join("\n---\n")
+};
+// Textos por defecto de versiones anteriores: si siguen sin editar, se cambian por los nuevos.
+const OLD_DEFAULTS = {
+  tplDelDia: ["Hola {nombre}, buen día. Soy {yo} de Crediclub. Le escribo para recordarle que hoy es su día de pago. Cualquier duda, con gusto le apoyo."],
+  tplMora: ["Hola {nombre}, buen día. Soy {yo} de Crediclub. Le escribo porque tengo registrado un pago pendiente en su crédito y quiero apoyarle a regularizarlo. ¿Tiene un momento para platicar?"],
+  tplTerceroDia: ["Hola, buen día. Soy {yo} de Crediclub. Este número nos fue proporcionado como contacto de {cliente}. ¿Me podría apoyar pidiéndole que se comunique conmigo a este número? Muchas gracias."],
+  tplTerceroMora: ["Hola, buen día. Soy {yo} de Crediclub. Este número nos fue proporcionado como referencia de {cliente} y necesito comunicarme con él/ella por un tema importante. ¿Me podría apoyar pidiéndole que me contacte a este número? Muchas gracias."]
 };
 
 // Columnas en el orden por defecto (cuando no viene encabezado) y nombres que se reconocen.
@@ -573,6 +597,7 @@ function migrate(raw){
   const out = Object.assign({}, d);
   out.cuentas = (d.cuentas && typeof d.cuentas==='object') ? d.cuentas : {};
   out.ajustes = Object.assign({}, DEFAULT_AJUSTES, (d.ajustes && typeof d.ajustes==='object') ? d.ajustes : {});
+  for(const k of Object.keys(OLD_DEFAULTS)) if(OLD_DEFAULTS[k].includes(out.ajustes[k])) out.ajustes[k] = DEFAULT_AJUSTES[k];
   if(!('ultimoRespaldo' in out)) out.ultimoRespaldo = null;
   const nowIso = new Date().toISOString();
   for(const key of Object.keys(out.cuentas)){
@@ -600,17 +625,30 @@ function migrate(raw){
   return out;
 }
 
-// WhatsApp: para el titular, idéntico al HTML original. Para terceros usa sus propias plantillas.
-// {nombre} = primer nombre del cliente · {cliente} = nombre completo · {yo} = mi nombre
-function properCase(s){ return String(s||'').trim().toLowerCase().replace(/(^|\s)(\S)/g,(m,a,b)=>a+b.toUpperCase()); }
-function waUrl(c, aj, tercero){
+// Nombre propio: "JUAN PEREZ DE LA CRUZ" -> "Juan Perez de la Cruz" (solo para mostrar; no cambia los datos)
+const PARTICULAS = ['de','del','la','las','los','y','e','van','von','da','di'];
+function properCase(s){
+  return String(s||'').trim().toLowerCase().split(/\s+/).filter(Boolean)
+    .map((w,i)=> (i>0 && PARTICULAS.includes(w)) ? w : w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+}
+function saludoHora(d){ const h = (d||new Date()).getHours(); return h<12 ? 'Buenos días' : h<19 ? 'Buenas tardes' : 'Buenas noches'; }
+function versiones(tpl){ return String(tpl||'').split(/\n[ \t]*-{3,}[ \t]*\n/).map(x=>x.trim()).filter(Boolean); }
+// WhatsApp: wa.me/52 + 10 dígitos, sin guardar contacto; plantilla según status (Mora / al corriente) y si es titular o tercero.
+function waUrl(c, aj, tercero, opts){
+  opts = opts || {};
   const num = String(c.tel||'').replace(/\D/g,'');
   if(num.length !== 10) return null;
   const first = (c.cliente||'').trim().split(/\s+/)[0] || '';
   const nombre = first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
   const mora = (c.status||'').toLowerCase().includes('mora');
   const tpl = tercero ? (mora ? aj.tplTerceroMora : aj.tplTerceroDia) : (mora ? aj.tplMora : aj.tplDelDia);
-  const msg = tpl.replace('{nombre}', nombre).replace('{yo}', aj.nombre).replace('{cliente}', properCase(c.cliente));
+  const vs = versiones(tpl); if(!vs.length) return null;
+  const rnd = opts.rnd || Math.random;
+  const msg = vs[Math.floor(rnd()*vs.length) % vs.length]
+    .split('{saludo}').join(saludoHora(opts.now))
+    .split('{nombre}').join(nombre)
+    .split('{cliente}').join(properCase(c.cliente))
+    .split('{yo}').join(aj.nombre);
   return 'https://wa.me/52' + num + '?text=' + encodeURIComponent(msg);
 }
 
@@ -901,7 +939,7 @@ function cardHtml(c, pos, hoy){
     const a = c.archivada;
     return `<div class="card archived ${open}">
       <div class="c-head" data-act="toggle" data-id="${id}">
-        <div class="c-main"><div class="c-name">${esc(c.cliente)}<span class="chev">›</span></div>
+        <div class="c-main"><div class="c-name">${esc(properCase(c.cliente))}<span class="chev">›</span></div>
           <div class="c-line"><span class="flag">🗂 ${esc(a.motivo)} · ${esc(fmtTs(a.ts))}</span></div></div>
       </div>
       <div class="actions">
@@ -926,7 +964,7 @@ function cardHtml(c, pos, hoy){
     <div class="c-head" data-act="toggle" data-id="${id}">
       <div class="order-badge ${routeOrder?'show':''}">${pos+1}</div>
       <div class="c-main">
-        <div class="c-name">${esc(c.cliente)}<span class="chev">›</span></div>
+        <div class="c-name">${esc(properCase(c.cliente))}<span class="chev">›</span></div>
         ${lineaHtml(c)}
       </div>
       <button class="assign-chip ${ameta.cls}" data-act="assign" data-id="${id}">${ameta.v?ameta.label:'Asignar'}</button>
@@ -981,7 +1019,7 @@ function openTelAdd(id){
   tQuien = 'Familiar';
   openSheet(`
     <h2>Agregar teléfono</h2>
-    <div class="sh-sub">${esc(c.cliente)} · el anterior no se borra, queda guardado en la cuenta.</div>
+    <div class="sh-sub">${esc(properCase(c.cliente))} · el anterior no se borra, queda guardado en la cuenta.</div>
     <div class="section"><div class="field-label">Número (10 dígitos)</div>
       <input class="inp" id="tNum" type="tel" inputmode="numeric" maxlength="16" placeholder="33 1234 5678"></div>
     <div class="section"><div class="field-label">¿De quién es?</div>
@@ -1101,7 +1139,7 @@ function openGestion(id, tipo, prompt){
   const sugerido = tipo==='WhatsApp' ? 'Mensaje enviado' : '';
   openSheet(`
     <h2>${prompt ? '¿Registrar la gestión?' : 'Registrar gestión'}</h2>
-    <div class="sh-sub">${esc(c.cliente)} · #${esc(c.id)}</div>
+    <div class="sh-sub">${esc(properCase(c.cliente))} · #${esc(c.id)}</div>
     <div class="section"><div class="field-label">Tipo</div>
       <div class="seg" id="gTipos">${GESTION_TIPOS.map(t=>`<button data-act="g-tipo" data-t="${t}" class="${t===gState.tipo?'on':''}">${t}</button>`).join('')}</div>
     </div>
@@ -1136,7 +1174,7 @@ function openCompromiso(id){
   const sug = Number(c.saldo)>0 ? Math.round(Number(c.saldo)) : '';
   openSheet(`
     <h2>Compromiso de pago</h2>
-    <div class="sh-sub">${esc(c.cliente)} · #${esc(c.id)}</div>
+    <div class="sh-sub">${esc(properCase(c.cliente))} · #${esc(c.id)}</div>
     <div class="section two">
       <div><div class="field-label">Fecha</div><input class="inp" type="date" id="cFecha" value="${todayKey()}"></div>
       <div><div class="field-label">Monto</div><input class="inp" type="number" inputmode="decimal" min="0" step="0.01" id="cMonto" value="${sug}" placeholder="0"></div>
@@ -1175,7 +1213,7 @@ function openArchivar(id){
   aMotivo = null;
   openSheet(`
     <h2>Archivar cuenta</h2>
-    <div class="sh-sub">${esc(c.cliente)} · #${esc(c.id)} — se quita de la vista, se puede restaurar.</div>
+    <div class="sh-sub">${esc(properCase(c.cliente))} · #${esc(c.id)} — se quita de la vista, se puede restaurar.</div>
     <div class="section"><div class="field-label">Motivo</div>
       <div class="seg" id="aMotivos">${MOTIVOS_ARCHIVO.map(m=>`<button data-act="a-motivo" data-m="${esc(m)}">${esc(m)}</button>`).join('')}</div>
     </div>
@@ -1247,12 +1285,12 @@ function analyzeImport(){
   const plan = planMerge(store, parsed);
   lastPlan = plan;
   const li = plan.items.map(it=>{
-    if(it.tipo==='error') return `<li class="err"><span class="pt">Error</span>Línea ${it.line}${it.data&&it.data.cliente?' ('+esc(it.data.cliente)+')':''}: ${esc(it.errores.join('; '))}</li>`;
+    if(it.tipo==='error') return `<li class="err"><span class="pt">Error</span>Línea ${it.line}${it.data&&it.data.cliente?' ('+esc(properCase(it.data.cliente))+')':''}: ${esc(it.errores.join('; '))}</li>`;
     const nom = it.data.cliente || (store.cuentas[it.id]||{}).cliente || '';
     const det = it.tipo==='nueva'
       ? `${esc(it.data.status||'')} · ${esc(it.data.dias!==undefined?it.data.dias:0)} días`
       : (it.cambios.length ? esc(it.cambios.join(' · ')) : 'Sin cambios en atraso') + (it.archivada?' · (está archivada, sigue archivada)':'');
-    return `<li><span class="pt ${it.tipo==='nueva'?'n':'u'}">${it.tipo==='nueva'?'Nueva':'Actualiza'}</span><b>${esc(nom)}</b> #${esc(it.id)}<div class="pd">${det}</div></li>`;
+    return `<li><span class="pt ${it.tipo==='nueva'?'n':'u'}">${it.tipo==='nueva'?'Nueva':'Actualiza'}</span><b>${esc(properCase(nom))}</b> #${esc(it.id)}<div class="pd">${det}</div></li>`;
   }).join('');
   const validas = plan.nuevas + plan.actualizadas;
   box.innerHTML = `
@@ -1281,11 +1319,12 @@ function openAjustes(){
     <h2>Ajustes</h2>
     <div class="sh-sub">Se guardan solo en este teléfono.</div>
     <div class="section"><div class="field-label">Mi nombre (para WhatsApp)</div><input class="inp" id="ajNombre" value="${esc(aj.nombre)}"></div>
-    <div class="section"><div class="field-label">Titular · al corriente (Del día)</div><textarea class="inp" id="ajDia" rows="4">${esc(aj.tplDelDia)}</textarea></div>
-    <div class="section"><div class="field-label">Titular · en atraso (Mora)</div><textarea class="inp" id="ajMora" rows="4">${esc(aj.tplMora)}</textarea></div>
-    <div class="section"><div class="field-label">Tercera persona · al corriente</div><textarea class="inp" id="ajTDia" rows="4">${esc(aj.tplTerceroDia)}</textarea></div>
-    <div class="section"><div class="field-label">Tercera persona · en atraso</div><textarea class="inp" id="ajTMora" rows="4">${esc(aj.tplTerceroMora)}</textarea>
-      <div class="help">{nombre} = primer nombre del cliente · {cliente} = nombre completo · {yo} = tu nombre.<br>
+    <div class="section"><div class="field-label">Titular · al corriente (Del día)</div><textarea class="inp" id="ajDia" rows="7">${esc(aj.tplDelDia)}</textarea></div>
+    <div class="section"><div class="field-label">Titular · en atraso (Mora)</div><textarea class="inp" id="ajMora" rows="7">${esc(aj.tplMora)}</textarea></div>
+    <div class="section"><div class="field-label">Tercera persona · al corriente</div><textarea class="inp" id="ajTDia" rows="6">${esc(aj.tplTerceroDia)}</textarea></div>
+    <div class="section"><div class="field-label">Tercera persona · en atraso</div><textarea class="inp" id="ajTMora" rows="6">${esc(aj.tplTerceroMora)}</textarea>
+      <div class="help">{saludo} = Buenos días / tardes / noches según la hora · {nombre} = primer nombre del cliente · {cliente} = nombre completo · {yo} = tu nombre.<br>
+      Puedes poner varias versiones en una plantilla separándolas con una línea que diga solo <b>---</b>; cada vez se usa una al azar.<br>
       Se usa la de “tercera persona” cuando el teléfono en uso es de un Familiar, Referencia u Otro.<br>
       ⚠️ A terceros nunca menciones adeudo, atraso, montos ni pagos (reglas de cobranza CONDUSEF).</div></div>
     <div class="btn-row">
@@ -1402,7 +1441,7 @@ document.addEventListener('click', e=>{
       c.archivada = null; saveData(); render(); toast('Cuenta restaurada'); break; }
     case 'borrar': {
       const c = store.cuentas[id];
-      if(confirm(`¿Borrar DEFINITIVAMENTE a ${c.cliente} (#${c.id})?\n\nSe pierde su historial y compromisos. No se puede deshacer.`)){
+      if(confirm(`¿Borrar DEFINITIVAMENTE a ${properCase(c.cliente)} (#${c.id})?\n\nSe pierde su historial y compromisos. No se puede deshacer.`)){
         delete store.cuentas[id]; openDetails.delete(id); saveData(); render(); toast('Cuenta borrada');
       }
       break; }

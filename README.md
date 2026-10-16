@@ -22,6 +22,7 @@ Columnas: `SafiCreditoID | Status | Oficina | Cliente | Saldo insoluto | Saldo e
 Si pegas o cargas con encabezados y agregas columnas nuevas al final (ej. "Domicilio casa"), se guardan solas y aparecen en **Más datos** al abrir la cuenta. Solo hace falta actualizar la app si se quiere que una columna haga algo especial.
 
 ## Versiones
+- **1.3.0** — Nombres en pantalla como Nombre Propio; mensajes más naturales: saludo según la hora ({saludo}), varias versiones por plantilla (separadas con ---) elegidas al azar, sin "él/ella".
 - **1.2.0** — 4 plantillas de WhatsApp: titular al corriente / en atraso y tercera persona al corriente / en atraso (se elige sola según de quién es el teléfono en uso). A terceros nunca se menciona adeudo.
 - **1.1.0** — Agregar teléfonos (el nuevo se usa para Llamar/WhatsApp, los anteriores se conservan); llamada con 10 dígitos sin +52; tarjetas compactas (tocar el nombre para ver todo); columnas extra automáticas.
 - **1.0.0** — Primera versión.

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const code = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
 const C = new Function(code + `; return {APP_VERSION, STORE_KEY, SCHEMA, DEFAULT_AJUSTES, parseMonto, parseInput, planMerge,
-  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero};`)();
+  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones};`)();
 
 let ok = 0;
 const t = (name, fn) => { fn(); ok++; console.log('✓', name); };
@@ -87,14 +87,40 @@ t('mezcla: nuevas, actualizadas, conserva historial/compromisos/asignación, not
   assert.ok(store.cuentas['900000002'], 'la cuenta que no vino en la carga no se borra');
 });
 
-t('WhatsApp idéntico al original', ()=>{
+t('WhatsApp: wa.me/52 + 10 dígitos, saludo por hora, versiones, sin montos', ()=>{
   const aj = C.DEFAULT_AJUSTES;
-  const u = C.waUrl({tel:'0000000002', cliente:'MARÍA PRUEBA DOS', status:'Del Dia'}, aj);
-  assert.equal(u, 'https://wa.me/520000000002?text=' + encodeURIComponent('Hola María, buen día. Soy José Fernández de Crediclub. Le escribo para recordarle que hoy es su día de pago. Cualquier duda, con gusto le apoyo.'));
-  const m = decodeURIComponent(C.waUrl({tel:'0000000001', cliente:'CLIENTE PRUEBA', status:'Mora'}, aj).split('text=')[1]);
-  assert.ok(m.startsWith('Hola Cliente, buen día.') && m.includes('pago pendiente'));
-  assert.ok(!/\$|\d/.test(m));
+  const am = new Date(2026,9,15,9), pm = new Date(2026,9,15,16), noche = new Date(2026,9,15,20);
+  const c = {tel:'0000000002', cliente:'MARÍA PRUEBA DOS', status:'Del Dia'};
+  const u = C.waUrl(c, aj, false, {now:am, rnd:()=>0});
+  assert.ok(u.startsWith('https://wa.me/520000000002?text='));
+  const m = decodeURIComponent(u.split('text=')[1]);
+  assert.ok(m.startsWith('Buenos días María, soy José Fernández de Crediclub.'), m);
+  assert.ok(decodeURIComponent(C.waUrl(c, aj, false, {now:pm, rnd:()=>0})).includes('Buenas tardes María'));
+  assert.ok(decodeURIComponent(C.waUrl(c, aj, false, {now:noche, rnd:()=>0})).includes('Buenas noches María'));
+  // todas las versiones de todas las plantillas: sin llaves sin reemplazar, sin montos ni cifras, sin él/ella
+  for(const k of ['tplDelDia','tplMora','tplTerceroDia','tplTerceroMora']){
+    const n = C.versiones(aj[k]).length; assert.ok(n>=2, k);
+    for(let i=0;i<n;i++){
+      const st = k.includes('Mora') ? 'Mora' : 'Del Dia';
+      const t = decodeURIComponent(C.waUrl({...c, status:st}, aj, k.includes('Tercero'), {now:am, rnd:()=>i/n+0.001}).split('text=')[1]);
+      assert.ok(!/[{}]|\$|\d|él\/ella/.test(t), k+': '+t);
+      if(k.includes('Tercero')) assert.ok(!/pago|adeudo|atraso|deuda|corriente/i.test(t), k+': '+t);
+    }
+  }
   assert.equal(C.waUrl({tel:'12345'}, aj), null);
+});
+
+t('nombre propio con partículas', ()=>{
+  assert.equal(C.properCase('ROBERTO NICOLAS DE LA CRUZ'), 'Roberto Nicolas de la Cruz');
+  assert.equal(C.properCase('  ana  DEL  RIO '), 'Ana del Rio');
+});
+
+t('textos viejos sin editar se actualizan; editados se respetan', ()=>{
+  const old = 'Hola {nombre}, buen día. Soy {yo} de Crediclub. Le escribo para recordarle que hoy es su día de pago. Cualquier duda, con gusto le apoyo.';
+  const m = C.migrate({schema:2, cuentas:{}, ajustes:{nombre:'Yo', tplDelDia:old, tplMora:'Mi texto propio'}});
+  assert.equal(m.ajustes.tplDelDia, C.DEFAULT_AJUSTES.tplDelDia);
+  assert.equal(m.ajustes.tplMora, 'Mi texto propio');
+  assert.equal(m.ajustes.nombre, 'Yo');
 });
 
 t('migración no borra nada', ()=>{
@@ -135,7 +161,7 @@ t('teléfono agregado: activo para llamar/WhatsApp, original se conserva; marcar
   assert.equal(C.telActivo(c),'0000000001');
   c.telefonos.push({num:'0000000099', quien:'Familiar'}); c.telActivo='0000000099';
   assert.equal(C.telActivo(c),'0000000099');
-  assert.ok(C.waUrl(Object.assign({},c,{tel:C.telActivo(c)}), store.ajustes).startsWith('https://wa.me/520000000099?'));
+  assert.ok(C.waUrl(Object.assign({},c,{tel:C.telActivo(c)}), store.ajustes, true).startsWith('https://wa.me/520000000099?'));
   // recarga de la lista actualiza el original pero no cambia el teléfono en uso
   const R1c = R1.slice(); R1c[9] = '+52 00 0000 0055';
   C.applyMerge(store, C.planMerge(store, C.parseInput(tsv([HEAD,R1c]))), '2026-10-02T00:00:00Z');
@@ -155,8 +181,8 @@ t('plantillas de tercero: sin montos ni adeudo, con nombre completo', ()=>{
   const aj = C.DEFAULT_AJUSTES;
   const c = {tel:'0000000099', cliente:'CLIENTE PRUEBA UNO', status:'Mora', telActivo:'0000000099', telefonos:[{num:'0000000099', quien:'Familiar'}]};
   assert.equal(C.esTercero(c), true);
-  const m = decodeURIComponent(C.waUrl(c, aj, true).split('text=')[1]);
-  assert.ok(m.includes('Cliente Prueba Uno') && m.includes('José Fernández'));
+  const m = decodeURIComponent(C.waUrl(c, aj, true, {rnd:()=>0}).split('text=')[1]);
+  assert.ok(m.includes('Cliente Prueba Uno') && m.includes('José Fernández'), m);
   assert.ok(!/pago|adeudo|atraso|deuda|\$|\d/i.test(m), m);
   const d = decodeURIComponent(C.waUrl({...c, status:'Del Dia'}, aj, true).split('text=')[1]);
   assert.ok(!/pago|adeudo|atraso|deuda|\$|\d/i.test(d), d);
