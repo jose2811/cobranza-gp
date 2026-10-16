@@ -193,13 +193,14 @@ t('plantillas de tercero: sin montos ni adeudo, con nombre completo', ()=>{
   assert.equal(mg.ajustes.tplMora,'X'); assert.equal(mg.ajustes.tplTerceroMora, aj.tplTerceroMora);
 });
 
-t('pegado sin tabuladores (separado por comas de la dirección) se marca como error', ()=>{
-  const corrida = '900000005 Del Dia CI-DEMO CLIENTE PRUEBA CINCO $19,566.79 $- $- 0 4 DE 8 0000000005 20.62 -103.40 CALLE FICTICIA 9, COLONIA DEMO, ZAPOPAN, JALISCO. C.P. 45000';
-  const p = C.parseInput(corrida);
-  assert.equal(p.sinTabs, true);
-  assert.ok(p.filas[0].errores.length > 0, 'debe marcar error');
-  const plan = C.planMerge(C.migrate(null), p);
-  assert.equal(plan.nuevas, 0);
+t('pegado sin tabuladores: si se reconoce la forma se lee; si no, error', ()=>{
+  const linea = '900000005 Del Dia CI-DEMO CLIENTE PRUEBA CINCO $19,566.79 $- $- 0 4 DE 8 0000000005 20.62 -103.40 CALLE FICTICIA 9, COLONIA DEMO, ZAPOPAN, JALISCO. C.P. 45000';
+  const p = C.parseInput(linea);
+  assert.equal(p.modoEspacios, true); assert.deepEqual(p.filas[0].errores, []);
+  assert.equal(p.filas[0].data.cliente, 'CLIENTE PRUEBA CINCO'); assert.equal(p.filas[0].data.direccion, 'CALLE FICTICIA 9, COLONIA DEMO, ZAPOPAN, JALISCO. C.P. 45000');
+  const basura = C.parseInput('cliente prueba, sin formato, 123, otra cosa');
+  assert.ok(basura.filas[0].errores.length > 0);
+  assert.equal(C.planMerge(C.migrate(null), basura).nuevas, 0);
   // fila con columnas de menos
   const p2 = C.parseInput(tsv([R1.slice(0,10)]));
   assert.ok(p2.filas[0].errores.some(e=>e.includes('columnas')));
@@ -207,6 +208,35 @@ t('pegado sin tabuladores (separado por comas de la dirección) se marca como er
   const R1x = R1.slice(); R1x[10] = '-103.35'; R1x[11] = '20.67';
   const p3 = C.parseInput(tsv([HEAD, R1x]));
   assert.ok(p3.filas[0].errores.some(e=>e.includes('fuera de México')));
+});
+
+t('pegado desde WhatsApp en celular (tabuladores convertidos en espacios)', ()=>{
+  // Mismo formato del Excel real, con datos inventados; los tabuladores se vuelven espacios.
+  const filasTab = [
+    ['900000011','Del Dia','CI-PRUEBA','ANA LUCIA PRUEBA UNO',' $20,212.33 ',' $-   ',' $-   ','0','5 de 8','0000000011','20.5099739','-103.3635928','CALLE FICTICIA 7  COLONIA DEMO, TLAQUEPAQUE, JALISCO. C.P. 45000'],
+    ['900000012','Mora','CI-PRUEBA','ROBERTO NICOLAS DE LA PRUEBA',' $33,197.41 ',' $4,045.00 ',' $928.00 ','7','4 de 12','0000000012','20.6974495','-103.3634862','Calle de prueba 1760 , COL. EJEMPLO, GUADALAJARA, JALISCO, C.P. 44000'],
+    ['900000013','Mora','CI-DEMO','CLIENTE SIN UBICACION',' $1,000.00 ',' $500.00 ',' $-   ','3','2 de 8','0000000013','','',''],
+  ];
+  const txt = [HEAD.join(' ')].concat(filasTab.map(r=>r.join(' '))).join('\n');
+  assert.ok(!txt.includes('\t'));
+  const p = C.parseInput(txt);
+  assert.equal(p.modoEspacios, true);
+  assert.equal(p.filas.length, 3);
+  for(const f of p.filas) assert.deepEqual(f.errores, [], JSON.stringify(f));
+  const [a,b,c] = p.filas.map(f=>f.data);
+  assert.equal(a.id,'900000011'); assert.equal(a.status,'Del Dia'); assert.equal(a.oficina,'CI-PRUEBA');
+  assert.equal(a.cliente,'ANA LUCIA PRUEBA UNO'); assert.equal(a.insoluto,20212.33); assert.equal(a.saldo,0);
+  assert.equal(a.pago,'5 de 8'); assert.equal(a.tel,'0000000011'); assert.equal(a.lat,20.5099739); assert.equal(a.lng,-103.3635928);
+  assert.equal(a.direccion,'CALLE FICTICIA 7 COLONIA DEMO, TLAQUEPAQUE, JALISCO. C.P. 45000');
+  assert.equal(b.status,'Mora'); assert.equal(b.cliente,'ROBERTO NICOLAS DE LA PRUEBA'); assert.equal(b.saldo,4045); assert.equal(b.multa,928); assert.equal(b.dias,7);
+  assert.equal(c.lat,null); assert.equal(c.direccion,'');
+  // y el mismo texto con tabuladores sigue funcionando por la vía normal
+  const pt = C.parseInput([HEAD].concat(filasTab).map(r=>r.join('\t')).join('\n'));
+  assert.ok(!pt.modoEspacios); assert.equal(pt.filas.filter(f=>!f.errores.length).length, 3);
+  // CSV de archivo con comas sigue por la vía normal
+  const q = r => r.map(v=>/[,"]/.test(v)?'"'+v+'"':v).join(',');
+  const pc = C.parseInput([HEAD].concat(filasTab).map(q).join('\n'));
+  assert.ok(!pc.modoEspacios); assert.equal(pc.filas.filter(f=>!f.errores.length).length, 3);
 });
 
 console.log(`\n${ok} pruebas OK`);

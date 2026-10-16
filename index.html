@@ -338,7 +338,7 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
@@ -474,7 +474,51 @@ function headerMap(cells){
 }
 
 // Convierte el texto pegado o el archivo en filas con datos limpios y errores.
+// Si no trae tabuladores (ej. copiado de WhatsApp en el celular) y no es un CSV válido,
+// intenta leer cada fila separada por espacios con el orden estándar de columnas.
 function parseInput(text){
+  const normal = parseInputBase(text);
+  if(String(text||'').includes('\t')) return normal;
+  const okNormal = normal.filas.filter(f=>!f.errores.length).length;
+  if(normal.filas.length && okNormal === normal.filas.length) return normal;
+  const esp = parseEspacios(text);
+  const okEsp = esp ? esp.filas.filter(f=>!f.errores.length).length : 0;
+  return okEsp > okNormal ? esp : normal;
+}
+
+// Lee una fila "aplastada" (espacios en vez de tabuladores):
+// ID  Status  Oficina  Cliente  $insoluto $atraso $multa  días  N de M  [teléfono] [lat lng] [dirección]
+const RE_ESP = /^(\d{5,}) (Del D[ií]a|[^\s$]+) (\S+) (.+?) \$ ?(-|[\d,]*\.?\d+) \$ ?(-|[\d,]*\.?\d+) \$ ?(-|[\d,]*\.?\d+) (\d+) (\d+ ?(?:de|\/) ?\d+)(?: (.*))?$/i;
+function filaEspacios(line){
+  const m = limpia(line).match(RE_ESP);
+  if(!m) return null;
+  let rest = (m[10]||'').split(' ').filter(Boolean);
+  let tel = '', lat = '', lng = '';
+  if(rest.length && /^\+?\d{10,13}$/.test(rest[0])) tel = rest.shift();
+  const coord = t => /^-?\d{1,3}\.\d+$/.test(t||'');
+  if(coord(rest[0]) && coord(rest[1])){ lat = rest.shift(); lng = rest.shift(); }
+  return [m[1], m[2], m[3], m[4], '$'+m[5], '$'+m[6], '$'+m[7], m[8], m[9], tel, lat, lng, rest.join(' ')];
+}
+function parseEspacios(text){
+  const lines = String(text||'').replace(/^\uFEFF/,'').split(/\r?\n/);
+  const filas = [];
+  let algun = false;
+  lines.forEach((ln, i)=>{
+    const t = limpia(ln);
+    if(!t) return;
+    if(i===0 && /safi|cliente|status/i.test(t) && !/^\d/.test(t)) return; // encabezado: se usa el orden estándar
+    const cells = filaEspacios(t);
+    if(!cells){ filas.push({line:i+1, data:{}, errores:['No pude separar las columnas de esta fila']}); return; }
+    algun = true;
+    const sub = parseInputBase(cells.join('\t'));
+    const f = sub.filas[0]; f.line = i+1;
+    filas.push(f);
+  });
+  if(!algun) return null;
+  return {delim:' ', conEncabezado:false, faltan:[], filas, sinTabs:false, modoEspacios:true};
+}
+
+function parseInputBase(text){
   text = String(text||'').replace(/^﻿/,'');
   const delim = detectDelim(text);
   const raw = parseTable(text, delim);
@@ -1318,6 +1362,7 @@ function analyzeImport(){
     </div>
     ${parsed.conEncabezado ? `<div class="help">Encabezados reconocidos.${parsed.faltan.length?' No venían: '+esc(parsed.faltan.join(', '))+' (esos datos no se modifican).':''}</div>`
                            : '<div class="help">Sin encabezados: usé el orden estándar de columnas.</div>'}
+    ${parsed.modoEspacios ? '<div class="help">ℹ️ El texto llegó sin tabuladores (normal al copiar de WhatsApp en el celular). Separé las columnas por su forma; revisa que nombres y montos se vean bien antes de guardar.</div>' : ''}
     ${parsed.sinTabs && !parsed.conEncabezado ? '<div class="banner" style="margin-top:8px"><span>⚠️ No encontré tabuladores. Copia directamente las celdas de Excel (selecciónalas y Copiar), no el texto de un mensaje o documento.</span></div>' : ''}
     <ul class="prev-list" style="margin-top:8px">${li}</ul>
     <div class="btn-row"><button class="btn primary" data-act="imp-save" ${validas?'':'disabled'}>Guardar ${validas} ${validas===1?'cuenta':'cuentas'}</button></div>`;

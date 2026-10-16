@@ -22,6 +22,7 @@ Columnas: `SafiCreditoID | Status | Oficina | Cliente | Saldo insoluto | Saldo e
 Si pegas o cargas con encabezados y agregas columnas nuevas al final (ej. "Domicilio casa"), se guardan solas y aparecen en **Más datos** al abrir la cuenta. Solo hace falta actualizar la app si se quiere que una columna haga algo especial.
 
 ## Versiones
+- **1.5.0** — Lee filas pegadas desde WhatsApp en el celular aunque los tabuladores lleguen como espacios (Excel en compu → WhatsApp con Ctrl+Shift+V → copiar en el celular → pegar en la app).
 - **1.4.0** — Borrar cuenta desde su detalle; Deshacer última carga (barra al guardar y en Ajustes); Borrar todas las cuentas; el pegado corrido o sin tabuladores se marca como error y no se guarda.
 - **1.3.0** — Nombres en pantalla como Nombre Propio; mensajes más naturales: saludo según la hora ({saludo}), varias versiones por plantilla (separadas con ---) elegidas al azar, sin "él/ella".
 - **1.2.0** — 4 plantillas de WhatsApp: titular al corriente / en atraso y tercera persona al corriente / en atraso (se elige sola según de quién es el teléfono en uso). A terceros nunca se menciona adeudo.
