@@ -16,12 +16,13 @@ App personal para dar seguimiento a cuentas de cobranza que atiendo directamente
 3. **⚙︎ Ajustes**: nombre y textos de WhatsApp, descargar / restaurar respaldo.
 4. Para instalarla: abrir la dirección en Chrome → menú ⋮ → *Agregar a pantalla principal*.
 
-Columnas: `SafiCreditoID | Status | Oficina | Cliente | Saldo insoluto | Saldo en atraso | Multa | Dias de atraso | Num. Pago | Telefono | Latitud | Longitud | Direccion del negocio`
+Columnas: `SafiCreditoID | Status | Oficina | Cliente | Saldo insoluto | Saldo en atraso | Multa | Dias de atraso | Num. Pago | Telefono | Latitud | Longitud | Direccion del negocio | Fecha de vencimiento (opcional)`
 
 ## Columnas extra
 Si pegas o cargas con encabezados y agregas columnas nuevas al final (ej. "Domicilio casa"), se guardan solas y aparecen en **Más datos** al abrir la cuenta. Solo hace falta actualizar la app si se quiere que una columna haga algo especial.
 
 ## Versiones
+- **1.7.0** — Columna opcional "Fecha de vencimiento": mensajes preventivos con {cuando} (hoy / mañana / este jueves 17), aviso 📅 en la tarjeta, filtro "Paga pronto" (0-3 días) y orden por fecha en cuentas al corriente. Datos v3.
 - **1.6.1** — Ícono nuevo: flecha de recuperación naranja con $ sobre fondo negro.
 - **1.6.0** — Color por tramo de atraso: 🟢 Del día, 🟡 Mora 1-7, 🔴 Mora 8+ (franja y etiqueta en la tarjeta) y filtros por tramo.
 - **1.5.0** — Lee filas pegadas desde WhatsApp en el celular aunque los tabuladores lleguen como espacios (Excel en compu → WhatsApp con Ctrl+Shift+V → copiar en el celular → pegar en la app).

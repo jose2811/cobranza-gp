@@ -346,12 +346,12 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.7.0';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
 // v1: inicial · v2: teléfonos agregados (telefonos/telActivo) y columnas extra (extras)
-const SCHEMA = 2;
+const SCHEMA = 3; // v3: fecha de vencimiento (vence)
 const TEL_QUIEN = ['Cliente','Familiar','Referencia','Otro'];
 
 const GESTION_TIPOS = ['Llamada','WhatsApp','Visita','Otro'];
@@ -367,10 +367,14 @@ const MOTIVOS_ARCHIVO = ['Liquidó','Se regularizó','Regresa al gerente/asesor'
 // Sin montos ni días de atraso. A terceros NUNCA se menciona adeudo, atraso ni pagos.
 const DEFAULT_AJUSTES = {
   nombre: "José Fernández",
+  // Al corriente: las versiones con {cuando} se usan si la cuenta trae fecha de vencimiento (hoy o próxima);
+  // las que no lo traen, cuando no hay fecha.
   tplDelDia: [
-    "{saludo} {nombre}, soy {yo} de Crediclub. Le escribo para recordarle su pago, si ya lo realizó muchas gracias y omita este mensaje 🙂",
-    "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Nada más para recordarle su pago; cualquier duda aquí estoy para apoyarle.",
-    "{saludo} {nombre}, le saluda {yo} de Crediclub. Le dejo el recordatorio de su pago. Que tenga excelente día."
+    "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Nada más para recordarle que {cuando} le toca su pago. Cualquier cosa aquí estoy.",
+    "{saludo} {nombre}, soy {yo} de Crediclub. Le recuerdo que su próximo pago es {cuando}. Si tiene alguna duda, con gusto le apoyo.",
+    "{saludo} {nombre}, ¿qué tal? Soy {yo}, de Crediclub. Le dejo el recordatorio: su pago es {cuando}. ¡Muchas gracias!",
+    "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Le mando un saludo y quedo a sus órdenes para cualquier cosa que necesite con su crédito.",
+    "{saludo} {nombre}, soy {yo} de Crediclub. Paso a saludarle; cualquier duda con su crédito o sus pagos, aquí estoy para apoyarle."
   ].join("\n---\n"),
   tplMora: [
     "{saludo} {nombre}, soy {yo} de Crediclub. Me gustaría platicar con usted sobre su crédito para ver cómo le puedo apoyar. ¿A qué hora le puedo llamar?",
@@ -388,7 +392,10 @@ const DEFAULT_AJUSTES = {
 };
 // Textos por defecto de versiones anteriores: si siguen sin editar, se cambian por los nuevos.
 const OLD_DEFAULTS = {
-  tplDelDia: ["Hola {nombre}, buen día. Soy {yo} de Crediclub. Le escribo para recordarle que hoy es su día de pago. Cualquier duda, con gusto le apoyo."],
+  tplDelDia: ["Hola {nombre}, buen día. Soy {yo} de Crediclub. Le escribo para recordarle que hoy es su día de pago. Cualquier duda, con gusto le apoyo.",
+    ["{saludo} {nombre}, soy {yo} de Crediclub. Le escribo para recordarle su pago, si ya lo realizó muchas gracias y omita este mensaje 🙂",
+     "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Nada más para recordarle su pago; cualquier duda aquí estoy para apoyarle.",
+     "{saludo} {nombre}, le saluda {yo} de Crediclub. Le dejo el recordatorio de su pago. Que tenga excelente día."].join("\n---\n")],
   tplMora: ["Hola {nombre}, buen día. Soy {yo} de Crediclub. Le escribo porque tengo registrado un pago pendiente en su crédito y quiero apoyarle a regularizarlo. ¿Tiene un momento para platicar?"],
   tplTerceroDia: ["Hola, buen día. Soy {yo} de Crediclub. Este número nos fue proporcionado como contacto de {cliente}. ¿Me podría apoyar pidiéndole que se comunique conmigo a este número? Muchas gracias."],
   tplTerceroMora: ["Hola, buen día. Soy {yo} de Crediclub. Este número nos fue proporcionado como referencia de {cliente} y necesito comunicarme con él/ella por un tema importante. ¿Me podría apoyar pidiéndole que me contacte a este número? Muchas gracias."]
@@ -409,9 +416,12 @@ const COLS = [
   {k:'lat',       alias:['latitud','lat']},
   {k:'lng',       alias:['longitud','lng','lon','long']},
   {k:'direccion', alias:['direcciondelnegocio','direccionnegocio','direccion']},
+  // Opcional (columna 14): fecha de vencimiento del próximo pago
+  {k:'vence',     alias:['fechadevencimiento','fechavencimiento','vencimiento','fechadeproximopago','fechaproximopago','proximopago',
+                         'fechadepago','fechapago','fechavence','vence']},
 ];
-const DATA_KEYS = ['status','oficina','cliente','insoluto','saldo','multa','dias','pago','tel','lat','lng','direccion'];
-const DATA_DEFAULTS = {status:'',oficina:'',cliente:'',insoluto:0,saldo:0,multa:0,dias:0,pago:'',tel:'',lat:null,lng:null,direccion:''};
+const DATA_KEYS = ['status','oficina','cliente','insoluto','saldo','multa','dias','pago','tel','lat','lng','direccion','vence'];
+const DATA_DEFAULTS = {status:'',oficina:'',cliente:'',insoluto:0,saldo:0,multa:0,dias:0,pago:'',tel:'',lat:null,lng:null,direccion:'',vence:''};
 
 function normKey(s){
   return String(s==null?'':s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
@@ -433,6 +443,35 @@ function parseCoord(s){
   if(!t.includes('.') && /^-?\d+,\d+$/.test(t)) t = t.replace(',','.');
   const n = Number(t);
   return (Number.isFinite(n) && n !== 0) ? n : null;
+}
+// Fecha de Excel -> 'AAAA-MM-DD'. Acepta 17/10/2026, 17/10/26, 17-10-2026, 2026-10-17, 17-oct-2026, 17 oct 2026
+// y el número de serie de Excel. Formato mexicano: día/mes. '' si viene vacío; null si no se entiende.
+const MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+function parseFecha(s){
+  const t = limpia(s).toLowerCase().replace(/\.$/,'');
+  if(!t || t==='-') return '';
+  const ok = (y,m,d)=>{
+    if(y<100) y += 2000;
+    const dt = new Date(y, m-1, d);
+    if(dt.getFullYear()!==y || dt.getMonth()!==m-1 || dt.getDate()!==d) return null;
+    return y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+  };
+  let m;
+  if((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return ok(+m[1], +m[2], +m[3]);
+  if((m = t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/))){
+    let d = +m[1], mo = +m[2];
+    if(mo > 12 && d <= 12){ const x = d; d = mo; mo = x; } // venía mes/día
+    return ok(+m[3], mo, d);
+  }
+  if((m = t.match(/^(\d{1,2})[\s\/\-.]*(?:de\s+)?([a-zé]{3})[a-zé]*\.?[\s\/\-.]*(?:de\s+|del\s+)?(\d{2,4})$/))){
+    const mo = MESES.indexOf(m[2].replace('é','e').slice(0,3).replace('set','sep')) + 1;
+    return mo ? ok(+m[3], mo, +m[1]) : null;
+  }
+  if(/^\d{5}$/.test(t)){ // número de serie de Excel
+    const dt = new Date(Date.UTC(1899,11,30) + Number(t)*864e5);
+    return ok(dt.getUTCFullYear(), dt.getUTCMonth()+1, dt.getUTCDate());
+  }
+  return null;
 }
 function limpiaTel(s){
   let d = String(s==null?'':s).replace(/\D/g,'');
@@ -505,7 +544,12 @@ function filaEspacios(line){
   if(rest.length && /^\+?\d{10,13}$/.test(rest[0])) tel = rest.shift();
   const coord = t => /^-?\d{1,3}\.\d+$/.test(t||'');
   if(coord(rest[0]) && coord(rest[1])){ lat = rest.shift(); lng = rest.shift(); }
-  return [m[1], m[2], m[3], m[4], '$'+m[5], '$'+m[6], '$'+m[7], m[8], m[9], tel, lat, lng, rest.join(' ')];
+  let dir = rest.join(' '), vence;
+  const fm = dir.match(/(?:^|\s)(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-\s][a-zA-Zé]{3,}\.?[\/\-\s]\d{2,4})$/);
+  if(fm && parseFecha(fm[1])){ vence = fm[1]; dir = dir.slice(0, fm.index).trim(); }
+  const cells = [m[1], m[2], m[3], m[4], '$'+m[5], '$'+m[6], '$'+m[7], m[8], m[9], tel, lat, lng, dir];
+  if(vence) cells.push(vence);
+  return cells;
 }
 function parseEspacios(text){
   const lines = String(text||'').replace(/^\uFEFF/,'').split(/\r?\n/);
@@ -548,20 +592,25 @@ function parseInputBase(text){
     });
     out.extras = extraCols.map(x=>x.label);
     rows.shift();
-    out.faltan = COLS.filter(c=>idxMap[c.k]===undefined).map(c=>c.k);
+    out.faltan = COLS.filter(c=>idxMap[c.k]===undefined && c.k!=='vence').map(c=>c.k);
   } else {
     idxMap = {}; COLS.forEach((c,i)=>{ idxMap[c.k]=i; });
   }
 
-  const nCols = out.conEncabezado ? null : COLS.length;
+  const nCols = out.conEncabezado ? null : COLS.length; // 14 (la última, fecha, es opcional)
   out.sinTabs = delim !== '\t';
   rows.forEach(r=>{
     const errores = [];
-    const get = k => idxMap[k]===undefined ? undefined : (r.cells[idxMap[k]] === undefined ? '' : r.cells[idxMap[k]]);
+    const get = k => {
+      if(idxMap[k]===undefined) return undefined;
+      const v = r.cells[idxMap[k]];
+      if(v === undefined) return (!out.conEncabezado && k==='vence') ? undefined : ''; // sin columna 14: no tocar la fecha
+      return v;
+    };
     const data = {};
     // Sin encabezado deben venir exactamente las 13 columnas; si no, la fila viene corrida.
-    if(nCols && r.cells.length !== nCols)
-      errores.push(`Trae ${r.cells.length} columnas y deben ser ${nCols} (fila corrida o mal copiada)`);
+    if(nCols && r.cells.length !== nCols && r.cells.length !== nCols-1)
+      errores.push(`Trae ${r.cells.length} columnas y deben ser ${nCols-1} (o ${nCols} con fecha de vencimiento) — fila corrida o mal copiada`);
     const idRaw = limpia(get('id')).replace(/\s/g,'');
     const id = idRaw.replace(/\D/g,'');
     if(!id) errores.push('Sin SafiCreditoID');
@@ -585,6 +634,10 @@ function parseInputBase(text){
         if(data[k] !== null && (data[k] < lo || data[k] > hi)) errores.push((k==='lat'?'Latitud':'Longitud')+' fuera de México: '+limpia(v));
       } else if(k==='tel'){
         data[k] = limpiaTel(v);
+      } else if(k==='vence'){
+        const f = parseFecha(v);
+        if(f === null) errores.push('Fecha de vencimiento no reconocida: "'+limpia(v)+'"');
+        else data[k] = f;
       } else {
         data[k] = limpia(v);
       }
@@ -697,6 +750,20 @@ function properCase(s){
     .map((w,i)=> (i>0 && PARTICULAS.includes(w)) ? w : w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
 }
 function saludoHora(d){ const h = (d||new Date()).getHours(); return h<12 ? 'Buenos días' : h<19 ? 'Buenas tardes' : 'Buenas noches'; }
+// "hoy" / "mañana" / "este jueves 17" / "el jueves 17 de octubre". null si no hay fecha o ya pasó.
+const DIAS_SEM = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+const MESES_L = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+function cuandoTexto(ymd, now){
+  if(!ymd) return null;
+  const [y,m,d] = String(ymd).split('-').map(Number); if(!y) return null;
+  const f = new Date(y, m-1, d); now = now || new Date();
+  const dif = dayDiff(now, f);
+  if(dif < 0) return null;
+  if(dif === 0) return 'hoy';
+  if(dif === 1) return 'mañana';
+  if(dif <= 6) return 'este ' + DIAS_SEM[f.getDay()] + ' ' + d;
+  return 'el ' + DIAS_SEM[f.getDay()] + ' ' + d + ' de ' + MESES_L[m-1];
+}
 function versiones(tpl){ return String(tpl||'').split(/\n[ \t]*-{3,}[ \t]*\n/).map(x=>x.trim()).filter(Boolean); }
 // WhatsApp: wa.me/52 + 10 dígitos, sin guardar contacto; plantilla según status (Mora / al corriente) y si es titular o tercero.
 function waUrl(c, aj, tercero, opts){
@@ -707,9 +774,14 @@ function waUrl(c, aj, tercero, opts){
   const nombre = first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
   const mora = (c.status||'').toLowerCase().includes('mora');
   const tpl = tercero ? (mora ? aj.tplTerceroMora : aj.tplTerceroDia) : (mora ? aj.tplMora : aj.tplDelDia);
-  const vs = versiones(tpl); if(!vs.length) return null;
+  let vs = versiones(tpl); if(!vs.length) return null;
+  const cuando = cuandoTexto(c.vence, opts.now);
+  // Con fecha vigente se prefieren las versiones que la mencionan; sin fecha, las que no.
+  const conF = vs.filter(v=>v.includes('{cuando}')), sinF = vs.filter(v=>!v.includes('{cuando}'));
+  if(cuando && conF.length) vs = conF; else if(!cuando && sinF.length) vs = sinF;
   const rnd = opts.rnd || Math.random;
   const msg = vs[Math.floor(rnd()*vs.length) % vs.length]
+    .split('{cuando}').join(cuando || 'pronto')
     .split('{saludo}').join(saludoHora(opts.now))
     .split('{nombre}').join(nombre)
     .split('{cliente}').join(properCase(c.cliente))
@@ -823,6 +895,7 @@ const FILTROS = [
   {k:'todas',      label:'Todas',              fn:c=>!c.archivada},
   {k:'hoy',        label:'Compromiso hoy',     fn:(c,h)=>!c.archivada && compPendientes(c).some(x=>x.fecha===h)},
   {k:'vencido',    label:'Compromiso vencido', fn:(c,h)=>!c.archivada && compPendientes(c).some(x=>x.fecha<h)},
+  {k:'pronto',     label:'📅 Paga pronto',     fn:c=>!c.archivada && pagaPronto(c)},
   {k:'singestion', label:'Sin gestión 3+ días',fn:c=>!c.archivada && diasSinGestion(c)>=3},
   {k:'deldia',     label:'🟢 Del día',         fn:c=>!c.archivada && tramo(c)==='dia'},
   {k:'mora17',     label:'🟡 Mora 1-7',        fn:c=>!c.archivada && tramo(c)==='m1'},
@@ -853,6 +926,12 @@ function assignMeta(v){ return ASSIGN_OPTS.find(a=>a.v===v) || ASSIGN_OPTS[0]; }
 function cycleAssign(v){ const i = ASSIGN_OPTS.findIndex(a=>a.v===v); return ASSIGN_OPTS[(i+1)%ASSIGN_OPTS.length].v; }
 function navUrl(lat,lng){ return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`; }
 
+function diasParaPago(c){
+  if(!c.vence) return null;
+  const [y,m,d] = String(c.vence).split('-').map(Number); if(!y) return null;
+  return dayDiff(new Date(), new Date(y, m-1, d));
+}
+function pagaPronto(c){ const n = diasParaPago(c); return n !== null && n >= 0 && n <= 3; }
 function baseList(){
   const q = normKey(busqueda);
   return cuentasList().filter(c=>{
@@ -865,7 +944,8 @@ function visibleList(){
   const hoy = todayKey();
   const f = FILTROS.find(x=>x.k===filtro) || FILTROS[0];
   const list = baseList().filter(c=>f.fn(c, hoy));
-  list.sort((a,b)=> (Number(b.dias)||0)-(Number(a.dias)||0) || (Number(b.saldo)||0)-(Number(a.saldo)||0) || String(a.cliente).localeCompare(String(b.cliente)));
+  list.sort((a,b)=> (Number(b.dias)||0)-(Number(a.dias)||0) || (Number(b.saldo)||0)-(Number(a.saldo)||0) ||
+    String(a.vence||'9999').localeCompare(String(b.vence||'9999')) || String(a.cliente).localeCompare(String(b.cliente)));
   if(routeOrder && filtro!=='archivadas'){
     const pos = new Map(routeOrder.map((id,i)=>[id,i]));
     list.sort((a,b)=>(pos.has(a.id)?pos.get(a.id):1e9)-(pos.has(b.id)?pos.get(b.id):1e9));
@@ -961,6 +1041,12 @@ function flagsHtml(c, hoy){
     else if(st==='hoy') out.push(`<span class="flag warn">🤝 Vence hoy · ${esc(fmtMoney(p.monto))}</span>`);
     else out.push(`<span class="flag">🤝 ${esc(fmtFecha(p.fecha))} · ${esc(fmtMoney(p.monto))}</span>`);
   }
+  const dp = diasParaPago(c);
+  if(dp !== null && dp >= 0 && dp <= 6){
+    const [y,m,d] = c.vence.split('-').map(Number);
+    const dia = DIAS_SEM[new Date(y,m-1,d).getDay()].slice(0,3);
+    out.push(`<span class="flag ${dp===0?'warn':dp===1?'blue':''}">📅 ${dp===0?'Paga hoy':dp===1?'Paga mañana':'Paga '+dia+' '+d}</span>`);
+  }
   if(c.telActivo){
     const t = (c.telefonos||[]).find(x=>x.num===c.telActivo);
     out.push(`<span class="flag blue">📱 Tel. agregado${t&&t.quien?' · '+esc(t.quien):''}</span>`);
@@ -983,7 +1069,8 @@ function datosHtml(c){
   const kv = [
     ['Crédito', '#'+c.id], ['Oficina', c.oficina||'—'], ['Núm. pago', c.pago||'—'],
     ['Saldo insoluto', fmtMoney(c.insoluto)], ['Saldo en atraso', fmtMoney(c.saldo)], ['Multa', fmtMoney(c.multa||0)],
-    ['Días de atraso', String(c.dias||0)], ['En seguimiento desde', fmtTs(c.alta)],
+    ['Días de atraso', String(c.dias||0)], ['Próximo pago', c.vence ? fmtFecha(c.vence) : '—'],
+    ['En seguimiento desde', fmtTs(c.alta)],
   ];
   const ex = Object.entries(c.extras||{}).filter(([k,v])=>String(v).trim()!=='');
   return `<div class="kv-grid">${kv.map(([k,v])=>`<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div>
@@ -1321,7 +1408,7 @@ function openImport(){
     <div class="sh-sub">Pega filas copiadas de Excel (con o sin encabezados) o carga un archivo.</div>
     <div class="section">
       <textarea class="inp big" id="impText" placeholder="SafiCreditoID\tStatus\tOficina\tCliente\t..."></textarea>
-      <div class="help">Columnas: SafiCreditoID · Status · Oficina · Cliente · Saldo insoluto · Saldo en atraso · Multa · Días de atraso · Num. Pago · Teléfono · Latitud · Longitud · Dirección del negocio.<br>
+      <div class="help">Columnas: SafiCreditoID · Status · Oficina · Cliente · Saldo insoluto · Saldo en atraso · Multa · Días de atraso · Num. Pago · Teléfono · Latitud · Longitud · Dirección del negocio · <i>Fecha de vencimiento (opcional, al final)</i>.<br>
       Archivo: .csv (CSV UTF-8, con comas o punto y coma) o .txt con tabuladores. Las cuentas que no vengan aquí no se borran.</div>
     </div>
     <div class="btn-row">
@@ -1429,7 +1516,7 @@ function openAjustes(){
     <div class="section"><div class="field-label">Titular · en atraso (Mora)</div><textarea class="inp" id="ajMora" rows="7">${esc(aj.tplMora)}</textarea></div>
     <div class="section"><div class="field-label">Tercera persona · al corriente</div><textarea class="inp" id="ajTDia" rows="6">${esc(aj.tplTerceroDia)}</textarea></div>
     <div class="section"><div class="field-label">Tercera persona · en atraso</div><textarea class="inp" id="ajTMora" rows="6">${esc(aj.tplTerceroMora)}</textarea>
-      <div class="help">{saludo} = Buenos días / tardes / noches según la hora · {nombre} = primer nombre del cliente · {cliente} = nombre completo · {yo} = tu nombre.<br>
+      <div class="help">{saludo} = Buenos días / tardes / noches según la hora · {cuando} = hoy / mañana / este jueves 17 (si la cuenta trae fecha de vencimiento) · {nombre} = primer nombre del cliente · {cliente} = nombre completo · {yo} = tu nombre.<br>
       Puedes poner varias versiones en una plantilla separándolas con una línea que diga solo <b>---</b>; cada vez se usa una al azar.<br>
       Se usa la de “tercera persona” cuando el teléfono en uso es de un Familiar, Referencia u Otro.<br>
       ⚠️ A terceros nunca menciones adeudo, atraso, montos ni pagos (reglas de cobranza CONDUSEF).</div></div>

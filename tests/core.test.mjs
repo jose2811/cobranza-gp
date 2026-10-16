@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const code = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
 const C = new Function(code + `; return {APP_VERSION, STORE_KEY, SCHEMA, DEFAULT_AJUSTES, parseMonto, parseInput, planMerge,
-  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo};`)();
+  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo, parseFecha, cuandoTexto};`)();
 
 let ok = 0;
 const t = (name, fn) => { fn(); ok++; console.log('✓', name); };
@@ -15,7 +15,7 @@ const R1 = ['900000001','Mora','CI-PRUEBA','CLIENTE PRUEBA UNO',' $20,212.33 ','
 const R2 = ['900000002','Del Dia','CI-PRUEBA','MARÍA PRUEBA DOS',' $19,566.79 ',' $-   ',' $-   ','0','4 de 8','0000000002','20.6800000','-103.3600000','AV INVENTADA 45, COLONIA EJEMPLO'];
 const tsv = rows => rows.map(r=>r.join('\t')).join('\n');
 
-t('clave fija y esquema', ()=>{ assert.equal(C.STORE_KEY,'cobranza_gp_datos'); assert.equal(C.SCHEMA,2); });
+t('clave fija y esquema', ()=>{ assert.equal(C.STORE_KEY,'cobranza_gp_datos'); assert.equal(C.SCHEMA,3); });
 
 t('montos', ()=>{
   assert.equal(C.parseMonto(' $20,212.33 '), 20212.33);
@@ -94,7 +94,7 @@ t('WhatsApp: wa.me/52 + 10 dígitos, saludo por hora, versiones, sin montos', ()
   const u = C.waUrl(c, aj, false, {now:am, rnd:()=>0});
   assert.ok(u.startsWith('https://wa.me/520000000002?text='));
   const m = decodeURIComponent(u.split('text=')[1]);
-  assert.ok(m.startsWith('Buenos días María, soy José Fernández de Crediclub.'), m);
+  assert.ok(m.startsWith('Buenos días María, ¿cómo está? Soy José Fernández, de Crediclub.'), m);
   assert.ok(decodeURIComponent(C.waUrl(c, aj, false, {now:pm, rnd:()=>0})).includes('Buenas tardes María'));
   assert.ok(decodeURIComponent(C.waUrl(c, aj, false, {now:noche, rnd:()=>0})).includes('Buenas noches María'));
   // todas las versiones de todas las plantillas: sin llaves sin reemplazar, sin montos ni cifras, sin él/ella
@@ -173,7 +173,7 @@ t('migración v1 → v2 agrega campos sin borrar', ()=>{
   const v1 = {schema:1, cuentas:{'900000004':{id:'900000004', tel:'523300000000', historial:[{tipo:'Visita'}], compromisos:[]}}};
   const m = C.migrate(v1);
   const c = m.cuentas['900000004'];
-  assert.equal(m.schema,2); assert.deepEqual(c.telefonos,[]); assert.equal(c.telActivo,''); assert.deepEqual(c.extras,{});
+  assert.equal(m.schema,3); assert.deepEqual(c.telefonos,[]); assert.equal(c.telActivo,''); assert.deepEqual(c.extras,{});
   assert.equal(c.tel,'3300000000'); assert.equal(c.historial.length,1);
 });
 
@@ -246,6 +246,54 @@ t('tramos de atraso', ()=>{
   assert.equal(C.tramo({status:'Mora', dias:8}), 'm8');
   assert.equal(C.tramo({status:'Mora', dias:45}), 'm8');
   assert.equal(C.tramo({status:'Mora', dias:0}), 'm1');
+});
+
+t('fechas de vencimiento', ()=>{
+  assert.equal(C.parseFecha('17/10/2026'),'2026-10-17');
+  assert.equal(C.parseFecha('17/10/26'),'2026-10-17');
+  assert.equal(C.parseFecha('2026-10-17'),'2026-10-17');
+  assert.equal(C.parseFecha('17-oct-2026'),'2026-10-17');
+  assert.equal(C.parseFecha('17 de octubre de 2026'),'2026-10-17');
+  assert.equal(C.parseFecha('10/17/2026'),'2026-10-17');
+  assert.equal(C.parseFecha('46312'),'2026-10-17');
+  assert.equal(C.parseFecha(''),'');
+  assert.equal(C.parseFecha('31/02/2026'),null);
+  const hoy = new Date(2026,9,15,10); // jueves 15 oct
+  assert.equal(C.cuandoTexto('2026-10-15',hoy),'hoy');
+  assert.equal(C.cuandoTexto('2026-10-16',hoy),'mañana');
+  assert.equal(C.cuandoTexto('2026-10-19',hoy),'este lunes 19');
+  assert.equal(C.cuandoTexto('2026-10-27',hoy),'el martes 27 de octubre');
+  assert.equal(C.cuandoTexto('2026-10-14',hoy),null);
+  assert.equal(C.cuandoTexto('',hoy),null);
+});
+
+t('mensaje preventivo usa la fecha cuando la hay', ()=>{
+  const aj = C.DEFAULT_AJUSTES, now = new Date(2026,9,15,9);
+  const base = {tel:'0000000002', cliente:'ANA PRUEBA', status:'Del Dia'};
+  for(let i=0;i<3;i++){
+    const m = decodeURIComponent(C.waUrl({...base, vence:'2026-10-16'}, aj, false, {now, rnd:()=>i/3+0.01}).split('text=')[1]);
+    assert.ok(m.includes('mañana') && m.startsWith('Buenos días Ana'), m);
+  }
+  const sin = decodeURIComponent(C.waUrl(base, aj, false, {now, rnd:()=>0}).split('text=')[1]);
+  assert.ok(!sin.includes('{cuando}') && !sin.includes('pronto') && !/recordarle su pago/.test(sin), sin);
+  const pasada = decodeURIComponent(C.waUrl({...base, vence:'2026-10-01'}, aj, false, {now, rnd:()=>0}).split('text=')[1]);
+  assert.ok(!/\d/.test(pasada), pasada);
+});
+
+t('columna de fecha: con encabezado, sin encabezado (14) y pegado desde WhatsApp', ()=>{
+  const H2 = HEAD.concat(['Fecha de vencimiento']);
+  const p = C.parseInput(tsv([H2, R1.concat(['17/10/2026'])]));
+  assert.equal(p.filas[0].data.vence,'2026-10-17'); assert.deepEqual(p.filas[0].errores,[]);
+  assert.equal(p.extras.length, 0);
+  const p14 = C.parseInput(tsv([R1.concat(['17/10/2026'])]));
+  assert.deepEqual(p14.filas[0].errores,[]); assert.equal(p14.filas[0].data.vence,'2026-10-17');
+  const p13 = C.parseInput(tsv([R1]));
+  assert.equal(p13.filas[0].data.vence, undefined, 'sin columna 14 no toca la fecha guardada');
+  const esp = C.parseInput(H2.join(' ')+'\n'+R1.concat(['17/10/2026']).join(' '));
+  assert.equal(esp.modoEspacios,true); assert.deepEqual(esp.filas[0].errores,[]);
+  assert.equal(esp.filas[0].data.vence,'2026-10-17'); assert.equal(esp.filas[0].data.direccion,'CALLE FICTICIA 123, COLONIA DEMO');
+  const mala = C.parseInput(tsv([H2, R1.concat(['mañana'])]));
+  assert.ok(mala.filas[0].errores.some(e=>e.includes('Fecha')));
 });
 
 console.log(`\n${ok} pruebas OK`);
