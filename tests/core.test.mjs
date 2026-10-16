@@ -193,4 +193,20 @@ t('plantillas de tercero: sin montos ni adeudo, con nombre completo', ()=>{
   assert.equal(mg.ajustes.tplMora,'X'); assert.equal(mg.ajustes.tplTerceroMora, aj.tplTerceroMora);
 });
 
+t('pegado sin tabuladores (separado por comas de la dirección) se marca como error', ()=>{
+  const corrida = '900000005 Del Dia CI-DEMO CLIENTE PRUEBA CINCO $19,566.79 $- $- 0 4 DE 8 0000000005 20.62 -103.40 CALLE FICTICIA 9, COLONIA DEMO, ZAPOPAN, JALISCO. C.P. 45000';
+  const p = C.parseInput(corrida);
+  assert.equal(p.sinTabs, true);
+  assert.ok(p.filas[0].errores.length > 0, 'debe marcar error');
+  const plan = C.planMerge(C.migrate(null), p);
+  assert.equal(plan.nuevas, 0);
+  // fila con columnas de menos
+  const p2 = C.parseInput(tsv([R1.slice(0,10)]));
+  assert.ok(p2.filas[0].errores.some(e=>e.includes('columnas')));
+  // coordenadas corridas
+  const R1x = R1.slice(); R1x[10] = '-103.35'; R1x[11] = '20.67';
+  const p3 = C.parseInput(tsv([HEAD, R1x]));
+  assert.ok(p3.filas[0].errores.some(e=>e.includes('fuera de México')));
+});
+
 console.log(`\n${ok} pruebas OK`);

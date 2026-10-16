@@ -257,6 +257,9 @@
   .c-head .assign-chip{flex:0 0 auto;}
   .c-head .order-badge{margin-top:1px;}
   .flags{padding:0 14px 11px;}
+  .banner.undo{background:var(--ok-bg);border-color:rgba(79,180,119,.4);color:var(--ok);}
+  .banner.undo button{background:var(--ok);color:#08140c;}
+  .banner button.x{background:transparent;color:inherit;padding:6px 4px;}
   .act-btn small{font-size:10px;opacity:.8;}
   .flag.blue{background:var(--blue-bg);color:var(--blue);}
   .note-strip .nt{-webkit-line-clamp:2;}
@@ -335,7 +338,7 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
@@ -498,12 +501,19 @@ function parseInput(text){
     idxMap = {}; COLS.forEach((c,i)=>{ idxMap[c.k]=i; });
   }
 
+  const nCols = out.conEncabezado ? null : COLS.length;
+  out.sinTabs = delim !== '\t';
   rows.forEach(r=>{
     const errores = [];
     const get = k => idxMap[k]===undefined ? undefined : (r.cells[idxMap[k]] === undefined ? '' : r.cells[idxMap[k]]);
     const data = {};
-    const id = String(get('id')==null ? '' : get('id')).replace(/\D/g,'');
+    // Sin encabezado deben venir exactamente las 13 columnas; si no, la fila viene corrida.
+    if(nCols && r.cells.length !== nCols)
+      errores.push(`Trae ${r.cells.length} columnas y deben ser ${nCols} (fila corrida o mal copiada)`);
+    const idRaw = limpia(get('id')).replace(/\s/g,'');
+    const id = idRaw.replace(/\D/g,'');
     if(!id) errores.push('Sin SafiCreditoID');
+    else if(!/^\d+$/.test(idRaw)) errores.push('SafiCreditoID no es número: "'+limpia(get('id'))+'"');
     data.id = id;
     for(const k of DATA_KEYS){
       const v = get(k);
@@ -518,6 +528,9 @@ function parseInput(text){
         else data[k] = Math.round(n);
       } else if(k==='lat' || k==='lng'){
         data[k] = parseCoord(v);
+        // Rango de México: si no cae aquí, la fila casi seguro viene corrida.
+        const [lo, hi] = k==='lat' ? [14, 33] : [-119, -86];
+        if(data[k] !== null && (data[k] < lo || data[k] > hi)) errores.push((k==='lat'?'Latitud':'Longitud')+' fuera de México: '+limpia(v));
       } else if(k==='tel'){
         data[k] = limpiaTel(v);
       } else {
@@ -1008,6 +1021,8 @@ function cardHtml(c, pos, hoy){
 
       <div class="section"><div class="field-label">Compromisos de pago</div>${compHtml(c, hoy)}</div>
       <div class="section"><div class="field-label">Historial de gestiones</div>${histHtml(c)}</div>
+      <div class="section"><button class="btn danger small" data-act="borrar" data-id="${id}">🗑 Borrar esta cuenta</button>
+        <div class="help">Si solo ya no le darás seguimiento, mejor usa Archivar (se puede restaurar).</div></div>
     </div>
   </div>`;
 }
@@ -1087,7 +1102,9 @@ function render(){
       if(d > 7) banner = `Tu último respaldo fue hace ${d} días.`;
     }
   }
-  $('bannerBox').innerHTML = banner ? `<div class="banner"><span>⚠️ ${banner}</span><button data-act="backup">Respaldar</button></div>` : '';
+  $('bannerBox').innerHTML =
+    (undoInfo ? `<div class="banner undo"><span>✓ Carga guardada: ${undoInfo.n} nuevas · ${undoInfo.u} actualizadas. ¿Salió mal?</span><button data-act="undo-import">Deshacer</button><button class="x" data-act="undo-hide">✕</button></div>` : '') +
+    (banner ? `<div class="banner"><span>⚠️ ${banner}</span><button data-act="backup">Respaldar</button></div>` : '');
 
   // Ruta
   const arch = filtro==='archivadas';
@@ -1301,14 +1318,39 @@ function analyzeImport(){
     </div>
     ${parsed.conEncabezado ? `<div class="help">Encabezados reconocidos.${parsed.faltan.length?' No venían: '+esc(parsed.faltan.join(', '))+' (esos datos no se modifican).':''}</div>`
                            : '<div class="help">Sin encabezados: usé el orden estándar de columnas.</div>'}
+    ${parsed.sinTabs && !parsed.conEncabezado ? '<div class="banner" style="margin-top:8px"><span>⚠️ No encontré tabuladores. Copia directamente las celdas de Excel (selecciónalas y Copiar), no el texto de un mensaje o documento.</span></div>' : ''}
     <ul class="prev-list" style="margin-top:8px">${li}</ul>
     <div class="btn-row"><button class="btn primary" data-act="imp-save" ${validas?'':'disabled'}>Guardar ${validas} ${validas===1?'cuenta':'cuentas'}</button></div>`;
 }
+const UNDO_KEY = STORE_KEY + '_antes_carga';
+let undoInfo = null;
 function saveImport(){
   if(!lastPlan) return;
+  // Copia de cómo estaba todo antes de esta carga, para poder deshacerla.
+  try{ localStorage.setItem(UNDO_KEY, JSON.stringify({ts:new Date().toISOString(), data:store})); }catch(e){}
   applyMerge(store, lastPlan, new Date().toISOString());
   const n = lastPlan.nuevas, u = lastPlan.actualizadas;
-  if(saveData()){ closeSheet(); clearRoute(); render(); toast(`${n} nuevas · ${u} actualizadas`); }
+  if(saveData()){ undoInfo = {n, u}; closeSheet(); clearRoute(); render(); toast(`${n} nuevas · ${u} actualizadas`); }
+}
+function hayDeshacer(){ try{ return !!localStorage.getItem(UNDO_KEY); }catch(e){ return false; } }
+function deshacerCarga(){
+  let snap = null;
+  try{ snap = JSON.parse(localStorage.getItem(UNDO_KEY)); }catch(e){}
+  if(!snap || !snap.data){ toast('No hay carga para deshacer'); return; }
+  if(!confirm(`¿Deshacer la última carga (${fmtTs(snap.ts)})?\n\nTodo regresa a como estaba antes de esa carga. Lo que hayas registrado después también se pierde.`)) return;
+  store = migrate(snap.data);
+  try{ localStorage.removeItem(UNDO_KEY); }catch(e){}
+  undoInfo = null; saveData(); closeSheet(); clearRoute(); openDetails.clear(); render(); toast('Carga deshecha');
+}
+function borrarTodo(){
+  const n = cuentasList().length;
+  if(!n){ toast('No hay cuentas'); return; }
+  if(!confirm(`¿Borrar las ${n} cuentas del teléfono?\n\nSe pierden historial y compromisos. Tus ajustes y plantillas se quedan.`)) return;
+  const t = prompt('Para confirmar escribe BORRAR');
+  if(!t || t.trim().toUpperCase()!=='BORRAR'){ toast('No se borró nada'); return; }
+  try{ localStorage.setItem(STORE_KEY+'_antes_borrar_todo', JSON.stringify(store)); }catch(e){}
+  store.cuentas = {}; undoInfo = null;
+  saveData(); closeSheet(); clearRoute(); openDetails.clear(); render(); toast('Cuentas borradas');
 }
 
 /* Ajustes y respaldo */
@@ -1341,6 +1383,13 @@ function openAjustes(){
       </div>
       <div class="help">El respaldo es un archivo .json con todo (cuentas, historial, compromisos y ajustes). Guárdalo en Drive o mándatelo por WhatsApp. Restaurar reemplaza lo que hay en este teléfono.</div>
       <input type="file" id="restFile" style="display:none">
+    </div>
+    <div class="section"><div class="field-label">Corregir cargas</div>
+      <div class="btn-row" style="margin-top:0">
+        <button class="btn" data-act="undo-import" ${hayDeshacer()?'':'disabled'}>↩️ Deshacer última carga</button>
+        <button class="btn danger" data-act="borrar-todo">🗑 Borrar todas las cuentas</button>
+      </div>
+      <div class="help">“Deshacer” regresa todo a como estaba antes de la última vez que pegaste o cargaste cuentas. “Borrar todas” deja la app vacía (tus ajustes y plantillas se quedan).</div>
     </div>
     <div class="section kv">Versión <b>${APP_VERSION}</b> · datos v${store.schema}<br>Tus cuentas nunca salen de este teléfono.</div>
     <div class="btn-row"><button class="btn" data-act="sheet-close">Cerrar</button></div>`);
@@ -1439,10 +1488,13 @@ document.addEventListener('click', e=>{
       const c = store.cuentas[id]; const now = new Date().toISOString();
       c.historial.unshift({id:uid(), ts:now, tipo:'Archivo', auto:true, resultado:'Restaurada a seguimiento', comentario:''});
       c.archivada = null; saveData(); render(); toast('Cuenta restaurada'); break; }
+    case 'undo-import': deshacerCarga(); break;
+    case 'undo-hide': undoInfo = null; render(); break;
+    case 'borrar-todo': borrarTodo(); break;
     case 'borrar': {
       const c = store.cuentas[id];
       if(confirm(`¿Borrar DEFINITIVAMENTE a ${properCase(c.cliente)} (#${c.id})?\n\nSe pierde su historial y compromisos. No se puede deshacer.`)){
-        delete store.cuentas[id]; openDetails.delete(id); saveData(); render(); toast('Cuenta borrada');
+        delete store.cuentas[id]; openDetails.delete(id); saveData(); if(sheetOpen) closeSheet(); render(); toast('Cuenta borrada');
       }
       break; }
     case 'filtro': filtro = el.dataset.f; clearRoute(); render(); window.scrollTo({top:0}); break;
