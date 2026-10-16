@@ -18,6 +18,13 @@ App personal para dar seguimiento a cuentas de cobranza que atiendo directamente
 
 Columnas: `SafiCreditoID | Status | Oficina | Cliente | Saldo insoluto | Saldo en atraso | Multa | Dias de atraso | Num. Pago | Telefono | Latitud | Longitud | Direccion del negocio`
 
+## Columnas extra
+Si pegas o cargas con encabezados y agregas columnas nuevas al final (ej. "Domicilio casa"), se guardan solas y aparecen en **Más datos** al abrir la cuenta. Solo hace falta actualizar la app si se quiere que una columna haga algo especial.
+
+## Versiones
+- **1.1.0** — Agregar teléfonos (el nuevo se usa para Llamar/WhatsApp, los anteriores se conservan); llamada con 10 dígitos sin +52; tarjetas compactas (tocar el nombre para ver todo); columnas extra automáticas.
+- **1.0.0** — Primera versión.
+
 ## Desarrollo
 - `index.html` (app completa, sin librerías externas), `sw.js` (red primero), `manifest.json`, `icons/`.
 - Pruebas: `node tests/core.test.mjs`

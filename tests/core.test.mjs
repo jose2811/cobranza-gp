@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const code = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
 const C = new Function(code + `; return {APP_VERSION, STORE_KEY, SCHEMA, DEFAULT_AJUSTES, parseMonto, parseInput, planMerge,
-  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim};`)();
+  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar};`)();
 
 let ok = 0;
 const t = (name, fn) => { fn(); ok++; console.log('✓', name); };
@@ -15,7 +15,7 @@ const R1 = ['900000001','Mora','CI-PRUEBA','CLIENTE PRUEBA UNO',' $20,212.33 ','
 const R2 = ['900000002','Del Dia','CI-PRUEBA','MARÍA PRUEBA DOS',' $19,566.79 ',' $-   ',' $-   ','0','4 de 8','0000000002','20.6800000','-103.3600000','AV INVENTADA 45, COLONIA EJEMPLO'];
 const tsv = rows => rows.map(r=>r.join('\t')).join('\n');
 
-t('clave fija y esquema', ()=>{ assert.equal(C.STORE_KEY,'cobranza_gp_datos'); assert.equal(C.SCHEMA,1); });
+t('clave fija y esquema', ()=>{ assert.equal(C.STORE_KEY,'cobranza_gp_datos'); assert.equal(C.SCHEMA,2); });
 
 t('montos', ()=>{
   assert.equal(C.parseMonto(' $20,212.33 '), 20212.33);
@@ -113,6 +113,42 @@ t('días sin gestión y compromisos', ()=>{
   assert.equal(C.diasSinGestion(c, now), 2);
   assert.equal(C.compEstado({estado:'pendiente',fecha:'2026-10-15'},'2026-10-15'),'hoy');
   assert.equal(C.compEstado({estado:'pendiente',fecha:'2026-10-14'},'2026-10-15'),'vencido');
+});
+
+t('columnas extra con encabezado se guardan en extras', ()=>{
+  const H = HEAD.concat(['Domicilio casa','Referencia']);
+  const p = C.parseInput(tsv([H, R1.concat(['CALLE CASA FICTICIA 9','Vecina'])]));
+  assert.deepEqual(p.filas[0].data.extras, {'Domicilio casa':'CALLE CASA FICTICIA 9','Referencia':'Vecina'});
+  assert.equal(p.filas[0].data.direccion,'CALLE FICTICIA 123, COLONIA DEMO');
+  const store = C.migrate(null);
+  C.applyMerge(store, C.planMerge(store,p), '2026-10-01T00:00:00Z');
+  assert.equal(store.cuentas['900000001'].extras['Referencia'],'Vecina');
+  // carga posterior sin esas columnas no las borra
+  C.applyMerge(store, C.planMerge(store, C.parseInput(tsv([HEAD,R1]))), '2026-10-02T00:00:00Z');
+  assert.equal(store.cuentas['900000001'].extras['Referencia'],'Vecina');
+});
+
+t('teléfono agregado: activo para llamar/WhatsApp, original se conserva; marcar sin +52', ()=>{
+  const store = C.migrate(null);
+  C.applyMerge(store, C.planMerge(store, C.parseInput(tsv([HEAD,R1]))), '2026-10-01T00:00:00Z');
+  const c = store.cuentas['900000001'];
+  assert.equal(C.telActivo(c),'0000000001');
+  c.telefonos.push({num:'0000000099', quien:'Familiar'}); c.telActivo='0000000099';
+  assert.equal(C.telActivo(c),'0000000099');
+  assert.ok(C.waUrl(Object.assign({},c,{tel:C.telActivo(c)}), store.ajustes).startsWith('https://wa.me/520000000099?'));
+  // recarga de la lista actualiza el original pero no cambia el teléfono en uso
+  const R1c = R1.slice(); R1c[9] = '+52 00 0000 0055';
+  C.applyMerge(store, C.planMerge(store, C.parseInput(tsv([HEAD,R1c]))), '2026-10-02T00:00:00Z');
+  assert.equal(c.tel,'0000000055'); assert.equal(C.telActivo(c),'0000000099');
+  assert.equal(C.telMarcar('+52 33 1234 5678'),'3312345678');
+});
+
+t('migración v1 → v2 agrega campos sin borrar', ()=>{
+  const v1 = {schema:1, cuentas:{'900000004':{id:'900000004', tel:'523300000000', historial:[{tipo:'Visita'}], compromisos:[]}}};
+  const m = C.migrate(v1);
+  const c = m.cuentas['900000004'];
+  assert.equal(m.schema,2); assert.deepEqual(c.telefonos,[]); assert.equal(c.telActivo,''); assert.deepEqual(c.extras,{});
+  assert.equal(c.tel,'3300000000'); assert.equal(c.historial.length,1);
 });
 
 console.log(`\n${ok} pruebas OK`);

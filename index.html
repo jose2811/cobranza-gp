@@ -241,6 +241,43 @@
   .prev-list .pd{color:var(--ink-dim);}
   .kv{font-size:12.5px;color:var(--ink-dim);line-height:1.6;}
   .kv b{color:var(--ink);font-family:var(--font-num);}
+  /* ---- v1.1: tarjetas compactas ---- */
+  .route-btn{flex-direction:row;justify-content:center;gap:6px;padding:10px 8px;}
+  .route-btn .ic{font-size:15px;}
+  .c-head{display:flex;align-items:flex-start;gap:10px;padding:13px 14px 8px;cursor:pointer;}
+  .c-main{flex:1;min-width:0;}
+  .c-name{font-size:16px;font-weight:700;line-height:1.25;word-break:break-word;}
+  .chev{display:inline-block;margin-left:6px;color:var(--ink-faint);font-weight:400;transition:transform .15s;}
+  .card.open .chev{transform:rotate(90deg);}
+  .c-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;}
+  .c-dias{font-family:var(--font-num);font-size:13px;font-weight:700;color:var(--bad);}
+  .c-saldo{font-family:var(--font-num);font-size:13px;font-weight:700;color:var(--ink);}
+  .c-saldo small{font-family:inherit;font-weight:500;color:var(--ink-faint);font-size:11px;}
+  .c-ok{font-size:12.5px;font-weight:600;color:var(--ok);}
+  .c-head .assign-chip{flex:0 0 auto;}
+  .c-head .order-badge{margin-top:1px;}
+  .flags{padding:0 14px 11px;}
+  .flag.blue{background:var(--blue-bg);color:var(--blue);}
+  .note-strip .nt{-webkit-line-clamp:2;}
+  .kv-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .kv-grid div{background:var(--card);border:1px solid var(--card-border);border-radius:9px;padding:7px 10px;min-width:0;}
+  .kv-grid div.wide{grid-column:1 / -1;}
+  .kv-grid span{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-faint);font-weight:700;}
+  .kv-grid b{display:block;font-size:13.5px;font-family:var(--font-num);font-weight:600;margin-top:2px;word-break:break-word;}
+  .addr-box{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;}
+  .addr-box .addr-line{font-size:13.5px;line-height:1.4;-webkit-user-select:text;user-select:text;word-break:break-word;}
+  .tel-row{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--card-border);border-radius:10px;padding:8px 10px;margin-bottom:8px;}
+  .tel-row.on{border-color:rgba(79,180,119,.45);}
+  .tel-info{flex:1;min-width:0;}
+  .tel-info b{display:block;font-family:var(--font-num);font-size:14px;}
+  .tel-info span{font-size:11.5px;color:var(--ink-dim);}
+  .mini-btn{background:var(--neutral-bg);border:1px solid var(--card-border);color:var(--ink);border-radius:8px;padding:7px 10px;
+    font-size:12.5px;font-weight:700;text-decoration:none;flex:0 0 auto;}
+  .btn.small{padding:9px;font-size:13px;width:100%;}
+  .btn-row.tight{margin-top:0;}
+  .btn-row.tight .btn{padding:10px 4px;font-size:12px;white-space:nowrap;}
+  .check{display:flex;align-items:center;gap:10px;margin-top:14px;font-size:13.5px;color:var(--ink);}
+  .check input{width:20px;height:20px;accent-color:var(--accent);}
   .toast{position:fixed;left:50%;bottom:calc(80px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);
     padding:9px 14px;border-radius:10px;font-size:13px;font-weight:600;z-index:60;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw;text-align:center;}
   .toast.show{opacity:1;}
@@ -297,11 +334,13 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
-const SCHEMA = 1;
+// v1: inicial · v2: teléfonos agregados (telefonos/telActivo) y columnas extra (extras)
+const SCHEMA = 2;
+const TEL_QUIEN = ['Cliente','Familiar','Referencia','Otro'];
 
 const GESTION_TIPOS = ['Llamada','WhatsApp','Visita','Otro'];
 const RESULTADOS = ['Contactado','Promesa de pago','Pagó','Mensaje enviado','No contesta','Buzón / apagado',
@@ -330,7 +369,7 @@ const COLS = [
   {k:'tel',       alias:['telefono','tel','celular','telefonocelular']},
   {k:'lat',       alias:['latitud','lat']},
   {k:'lng',       alias:['longitud','lng','lon','long']},
-  {k:'direccion', alias:['direcciondelnegocio','direccionnegocio','direccion','domicilio']},
+  {k:'direccion', alias:['direcciondelnegocio','direccionnegocio','direccion']},
 ];
 const DATA_KEYS = ['status','oficina','cliente','insoluto','saldo','multa','dias','pago','tel','lat','lng','direccion'];
 const DATA_DEFAULTS = {status:'',oficina:'',cliente:'',insoluto:0,saldo:0,multa:0,dias:0,pago:'',tel:'',lat:null,lng:null,direccion:''};
@@ -413,11 +452,18 @@ function parseInput(text){
   const out = {delim, conEncabezado:false, faltan:[], filas:[]};
   if(!rows.length) return out;
 
-  let idxMap;
+  let idxMap; const extraCols = [];
   const h = headerMap(rows[0].cells);
   if(h.hits >= 3 && (h.map.id !== undefined || h.map.cliente !== undefined)){
     out.conEncabezado = true;
     idxMap = h.map;
+    // Columnas que no son de las 13 estándar: se guardan como "Más datos" con su encabezado.
+    const usados = new Set(Object.values(idxMap));
+    rows[0].cells.forEach((cell, idx)=>{
+      const label = limpia(cell);
+      if(label && !usados.has(idx) && !extraCols.some(x=>x.label===label)) extraCols.push({idx, label});
+    });
+    out.extras = extraCols.map(x=>x.label);
     rows.shift();
     out.faltan = COLS.filter(c=>idxMap[c.k]===undefined).map(c=>c.k);
   } else {
@@ -449,6 +495,10 @@ function parseInput(text){
       } else {
         data[k] = limpia(v);
       }
+    }
+    if(extraCols.length){
+      data.extras = {};
+      extraCols.forEach(x=>{ data.extras[x.label] = limpia(r.cells[x.idx]); });
     }
     if(data.cliente !== undefined && !data.cliente) errores.push('Sin nombre de cliente');
     out.filas.push({line:r.line, data, errores});
@@ -490,7 +540,7 @@ function nuevaCuenta(data, nowIso){
   const c = {id:data.id};
   for(const k of DATA_KEYS) c[k] = data[k]!==undefined ? data[k] : DATA_DEFAULTS[k];
   Object.assign(c, {alta:nowIso, actualizado:nowIso, assign:'', visita:'pendiente', obs:'', obsAt:'',
-    historial:[], compromisos:[], archivada:null});
+    historial:[], compromisos:[], archivada:null, telefonos:[], telActivo:'', extras:Object.assign({}, data.extras||{})});
   c.historial.unshift({id:uid(), ts:nowIso, tipo:'Sistema', auto:true,
     resultado:'', comentario:'Alta en seguimiento · '+(c.status||'')+' · '+c.dias+' días de atraso'});
   return c;
@@ -504,6 +554,7 @@ function applyMerge(store, plan, nowIso){
     if(it.tipo==='nueva'){ store.cuentas[it.id] = nuevaCuenta(it.data, nowIso); continue; }
     const c = store.cuentas[it.id];
     for(const k of DATA_KEYS) if(it.data[k] !== undefined) c[k] = it.data[k];
+    if(it.data.extras) c.extras = Object.assign({}, c.extras||{}, it.data.extras);
     c.actualizado = nowIso;
     if(it.cambios.length){
       c.historial.unshift({id:uid(), ts:nowIso, tipo:'Sistema', auto:true, resultado:'', comentario:it.cambios.join(' · ')});
@@ -533,9 +584,14 @@ function migrate(raw){
     if(c.obs === undefined) c.obs = '';
     if(c.archivada === undefined) c.archivada = null;
     if(!c.alta) c.alta = c.actualizado || nowIso;
+    // v2: teléfonos agregados y columnas extra
+    if(!Array.isArray(c.telefonos)) c.telefonos = [];
+    if(c.telActivo === undefined) c.telActivo = '';
+    if(!c.extras || typeof c.extras!=='object') c.extras = {};
+    if(c.tel) c.tel = limpiaTel(c.tel);
   }
   // --- Aquí van las transformaciones de versiones futuras, por ejemplo:
-  // if((d.schema||1) < 2){ ... }
+  // if((d.schema||1) < 3){ ... }
   out.schema = SCHEMA;
   return out;
 }
@@ -550,6 +606,12 @@ function waUrl(c, aj){
   const msg = tpl.replace('{nombre}', nombre).replace('{yo}', aj.nombre);
   return 'https://wa.me/52' + num + '?text=' + encodeURIComponent(msg);
 }
+
+// Teléfono que se usa para llamar y WhatsApp: el agregado "en uso" o, si no hay, el de la lista.
+function telActivo(c){ return c.telActivo || c.tel || ''; }
+// Número para la app de teléfono: solo los 10 dígitos, sin +52.
+function telMarcar(n){ return limpiaTel(n); }
+function fmtTel(n){ const d = limpiaTel(n); return d.length===10 ? d.slice(0,2)+' '+d.slice(2,6)+' '+d.slice(6) : d; }
 
 function pad2(n){ return String(n).padStart(2,'0'); }
 function todayKey(d){ d = d || new Date(); return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate()); }
@@ -763,109 +825,178 @@ function flagsHtml(c, hoy){
   const out = [];
   const dsg = diasSinGestion(c);
   const g = ultimaGestion(c);
-  let lbl;
-  if(g) lbl = dsg===0 ? 'Gestión hoy' : `${dsg} ${dsg===1?'día':'días'} sin gestión`;
-  else lbl = dsg===0 ? 'Alta hoy · sin gestión' : `${dsg} ${dsg===1?'día':'días'} sin gestión`;
-  out.push(`<span class="flag ${dsg>=3?'warn':(g&&dsg===0?'ok':'')}">⏱ ${lbl}</span>`);
+  if(g && dsg===0) out.push(`<span class="flag ok">✓ Gestionada hoy</span>`);
+  else if(!g && dsg===0) out.push(`<span class="flag">Nueva · sin gestión</span>`);
+  else out.push(`<span class="flag ${dsg>=3?'warn':''}">⏱ ${dsg} ${dsg===1?'día':'días'} sin gestión</span>`);
   const p = compPendientes(c)[0];
   if(p){
     const st = compEstado(p, hoy);
-    if(st==='vencido') out.push(`<span class="flag bad">🤝 Vencido · ${esc(fmtMoney(p.monto))} · ${esc(fmtFecha(p.fecha))}</span>`);
+    if(st==='vencido') out.push(`<span class="flag bad">🤝 Vencido ${esc(fmtFecha(p.fecha))} · ${esc(fmtMoney(p.monto))}</span>`);
     else if(st==='hoy') out.push(`<span class="flag warn">🤝 Vence hoy · ${esc(fmtMoney(p.monto))}</span>`);
     else out.push(`<span class="flag">🤝 ${esc(fmtFecha(p.fecha))} · ${esc(fmtMoney(p.monto))}</span>`);
   }
+  if(c.telActivo){
+    const t = (c.telefonos||[]).find(x=>x.num===c.telActivo);
+    out.push(`<span class="flag blue">📱 Tel. agregado${t&&t.quien?' · '+esc(t.quien):''}</span>`);
+  }
+  if(c.visita && c.visita!=='pendiente'){
+    const v = statusMeta(c.visita);
+    out.push(`<span class="flag ${v.cls==='visita-visitado'?'ok':v.cls==='visita-norep'?'bad':'warn'}">${esc(v.label)}</span>`);
+  }
   return `<div class="flags">${out.join('')}</div>`;
 }
-function numsHtml(c){
-  return `<div class="nums">
-    <div class="num-box"><div class="val">${esc(fmtMoney(c.insoluto))}</div><div class="lbl">Insoluto</div></div>
-    <div class="num-box"><div class="val">${esc(fmtMoney(c.saldo))}</div><div class="lbl">En atraso</div></div>
-    <div class="num-box ${c.multa>0?'hay-multa':''}"><div class="val">${esc(fmtMoney(c.multa||0))}</div><div class="lbl">Multa</div></div>
-    <div class="num-box atraso"><div class="val">${esc(c.dias)}</div><div class="lbl">Días atr.</div></div>
-    <div class="num-box"><div class="val" style="font-size:10.5px;">${esc(c.pago)}</div><div class="lbl">Núm. pago</div></div>
-  </div>`;
+function lineaHtml(c){
+  const mora = esMora(c);
+  const dias = Number(c.dias)||0, saldo = Number(c.saldo)||0;
+  const pill = `<span class="pill ${mora?'cartera-mora':'cartera-deldia'}">${esc(c.status||'—')}</span>`;
+  if(!dias && !saldo) return `<div class="c-line">${pill}<span class="c-ok">Al corriente</span></div>`;
+  return `<div class="c-line">${pill}<span class="c-dias">${dias} ${dias===1?'día':'días'}</span><span class="c-saldo">${esc(fmtMoney(saldo))} <small>en atraso</small></span></div>`;
+}
+function datosHtml(c){
+  const kv = [
+    ['Crédito', '#'+c.id], ['Oficina', c.oficina||'—'], ['Núm. pago', c.pago||'—'],
+    ['Saldo insoluto', fmtMoney(c.insoluto)], ['Saldo en atraso', fmtMoney(c.saldo)], ['Multa', fmtMoney(c.multa||0)],
+    ['Días de atraso', String(c.dias||0)], ['En seguimiento desde', fmtTs(c.alta)],
+  ];
+  const ex = Object.entries(c.extras||{}).filter(([k,v])=>String(v).trim()!=='');
+  return `<div class="kv-grid">${kv.map(([k,v])=>`<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div>
+    ${ex.length?`<div class="section"><div class="field-label">Más datos</div><div class="kv-grid">${ex.map(([k,v])=>`<div class="wide"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div></div>`:''}`;
+}
+function telsHtml(c){
+  const activo = telActivo(c);
+  const rows = [];
+  if(c.tel) rows.push({num:c.tel, quien:'Original (lista)', nota:'', orig:true});
+  (c.telefonos||[]).forEach(t=>rows.push(t));
+  rows.sort((a,b)=>(b.num===activo)-(a.num===activo));
+  const list = rows.map(t=>{
+    const enUso = t.num===activo;
+    return `<div class="tel-row ${enUso?'on':''}">
+      <div class="tel-info"><b>${esc(fmtTel(t.num))}</b><span>${esc(t.quien||'')}${t.nota?' · '+esc(t.nota):''}</span></div>
+      <a class="mini-btn" href="tel:${esc(telMarcar(t.num))}">📞</a>
+      ${enUso?'<span class="flag ok">En uso</span>':`<button class="mini-btn" data-act="tel-usar" data-id="${esc(c.id)}" data-num="${esc(t.orig?'':t.num)}">Usar</button>`}
+    </div>`;
+  }).join('');
+  return `${list || '<div class="hist-empty">Sin teléfono registrado.</div>'}
+    <button class="btn small" data-act="tel-add" data-id="${esc(c.id)}">＋ Agregar teléfono</button>`;
 }
 function cardHtml(c, pos, hoy){
   const id = esc(c.id);
   const open = openDetails.has(c.id) ? 'open' : '';
   const ameta = assignMeta(c.assign||'');
-  const meta = `<div class="meta-row"><span class="id">#${id}</span><span>${esc(c.oficina)}</span>${c.pago?`<span>Pago ${esc(c.pago)}</span>`:''}</div>`;
 
   if(c.archivada){
     const a = c.archivada;
-    return `<div class="card archived">
-      <div class="card-top" data-act="toggle" data-id="${id}">
-        <div class="top-left"><div class="name-block"><div class="cliente-name">${esc(c.cliente)}</div>${meta}</div></div>
-        <div class="badges"><div class="pill ${carteraClass(c.status)}">${esc(c.status)}</div></div>
+    return `<div class="card archived ${open}">
+      <div class="c-head" data-act="toggle" data-id="${id}">
+        <div class="c-main"><div class="c-name">${esc(c.cliente)}<span class="chev">›</span></div>
+          <div class="c-line"><span class="flag">🗂 ${esc(a.motivo)} · ${esc(fmtTs(a.ts))}</span></div></div>
       </div>
-      <div class="arch-strip">🗂 Archivada el <b>${esc(fmtTs(a.ts))}</b> · ${esc(a.motivo)}${a.nota?' · '+esc(a.nota):''}</div>
-      ${numsHtml(c)}
       <div class="actions">
         <button class="act-btn nav" data-act="restaurar" data-id="${id}"><span class="ic">↩️</span>Restaurar</button>
-        <button class="act-btn sec" data-act="toggle" data-id="${id}"><span class="ic">🕘</span>Historial (${c.historial.length})</button>
-        <button class="act-btn danger" data-act="borrar" data-id="${id}"><span class="ic">🗑</span>Borrar definitivo</button>
+        <button class="act-btn sec" data-act="toggle" data-id="${id}"><span class="ic">🕘</span>Historial</button>
+        <button class="act-btn danger" data-act="borrar" data-id="${id}"><span class="ic">🗑</span>Borrar</button>
       </div>
-      <div class="detail ${open}">${histHtml(c)}</div>
+      <div class="detail ${open}">
+        ${a.nota?`<div class="kv" style="margin-bottom:10px">Nota: ${esc(a.nota)}</div>`:''}
+        ${datosHtml(c)}
+        <div class="section"><div class="field-label">Historial</div>${histHtml(c)}</div>
+      </div>
     </div>`;
   }
 
   const vmeta = statusMeta(c.visita);
-  const wa = waUrl(c, store.ajustes);
-  return `<div class="card st-${vmeta.cls.replace('visita-','')}">
-    <div class="card-top" data-act="toggle" data-id="${id}">
-      <div class="top-left">
-        <div class="order-badge ${routeOrder?'show':''}">${pos+1}</div>
-        <div class="name-block"><div class="cliente-name">${esc(c.cliente)}</div>${meta}</div>
+  const tel = telActivo(c);
+  const wa = waUrl(Object.assign({}, c, {tel}), store.ajustes);
+  const obs = (c.obs||'').trim();
+  return `<div class="card st-${vmeta.cls.replace('visita-','')} ${open}">
+    <div class="c-head" data-act="toggle" data-id="${id}">
+      <div class="order-badge ${routeOrder?'show':''}">${pos+1}</div>
+      <div class="c-main">
+        <div class="c-name">${esc(c.cliente)}<span class="chev">›</span></div>
+        ${lineaHtml(c)}
       </div>
-      <div class="badges">
-        <button class="assign-chip ${ameta.cls}" data-act="assign" data-id="${id}">${ameta.label}</button>
-        <div class="pill ${carteraClass(c.status)}">${esc(c.status)}</div>
-        <div class="pill ${vmeta.cls}">${vmeta.label}</div>
-      </div>
+      <button class="assign-chip ${ameta.cls}" data-act="assign" data-id="${id}">${ameta.v?ameta.label:'Asignar'}</button>
     </div>
     ${flagsHtml(c, hoy)}
-    <div class="note-strip ${(c.obs||'').trim()?'show':''}" id="note-${id}" data-act="toggle" data-id="${id}"><span class="ni">📝</span><span class="nt">${esc((c.obs||'').trim())}</span><span class="nh">${esc((c.obs||'').trim()?c.obsAt||'':'')}</span></div>
-    ${numsHtml(c)}
-    <div class="addr-card">
-      <div class="addr-body">
-        <div class="addr-label">Dirección</div>
-        <div class="addr-line ${c.direccion?'':'vacio'}">${c.direccion?esc(c.direccion):'Sin dirección registrada'}</div>
-      </div>
-      ${c.direccion?`<button class="copy-btn" data-act="copy" data-id="${id}">Copiar</button>`:''}
-    </div>
+    ${obs?`<div class="note-strip show" id="note-${id}" data-act="toggle" data-id="${id}"><span class="ni">📝</span><span class="nt">${esc(obs)}</span></div>`:`<div class="note-strip" id="note-${id}" data-act="toggle" data-id="${id}"><span class="ni">📝</span><span class="nt"></span></div>`}
     <div class="actions">
-      ${c.tel ? `<a class="act-btn call" href="tel:${esc(c.tel)}" data-act="call" data-id="${id}"><span class="ic">📞</span>${esc(c.tel)}</a>`
-              : `<span class="act-btn call disabled"><span class="ic">📞</span>Sin teléfono</span>`}
+      ${tel ? `<a class="act-btn call" href="tel:${esc(telMarcar(tel))}" data-act="call" data-id="${id}"><span class="ic">📞</span>Llamar</a>`
+            : `<span class="act-btn call disabled"><span class="ic">📞</span>Sin tel.</span>`}
       ${wa ? `<a class="act-btn wa" href="${esc(wa)}" target="_blank" rel="noopener" data-act="wa" data-id="${id}"><span class="ic">💬</span>WhatsApp</a>`
            : `<span class="act-btn wa disabled"><span class="ic">💬</span>Sin WhatsApp</span>`}
       ${hasCoords(c) ? `<a class="act-btn nav" href="${esc(navUrl(c.lat,c.lng))}" target="_blank" rel="noopener"><span class="ic">🧭</span>Ir al punto</a>`
                      : `<span class="act-btn nav disabled"><span class="ic">🧭</span>Sin ubicación</span>`}
     </div>
-    <div class="actions four">
-      <button class="act-btn sec" data-act="gestion" data-id="${id}"><span class="ic">📝</span>Gestión</button>
-      <button class="act-btn sec" data-act="compromiso" data-id="${id}"><span class="ic">🤝</span>Compromiso</button>
-      <button class="act-btn sec" data-act="toggle" data-id="${id}"><span class="ic">🕘</span>Historial (${c.historial.filter(h=>!h.auto).length})</button>
-      <button class="act-btn sec" data-act="archivar" data-id="${id}"><span class="ic">🗂</span>Archivar</button>
-    </div>
     <div class="detail ${open}">
-      <div class="two">
-        <div><div class="addr-label">Coordenadas</div><div class="addr-text">${hasCoords(c)?esc(c.lat+', '+c.lng):'Sin coordenadas'}</div></div>
-        <div><div class="addr-label">En seguimiento desde</div><div class="addr-text">${esc(fmtTs(c.alta))}</div></div>
+      <div class="btn-row tight">
+        <button class="btn" data-act="gestion" data-id="${id}">📝 Gestión</button>
+        <button class="btn" data-act="compromiso" data-id="${id}">🤝 Compromiso</button>
+        <button class="btn" data-act="archivar" data-id="${id}">🗂 Archivar</button>
       </div>
 
-      <div class="field-label">Estatus de la visita</div>
-      <select class="status-select" data-chg="visita" data-id="${id}">
-        ${STATUS_OPTS.map(o=>`<option value="${o.v}" ${o.v===c.visita?'selected':''}>${o.label}</option>`).join('')}
-      </select>
+      <div class="section">${datosHtml(c)}</div>
 
-      <div class="field-label" style="margin-top:12px;">Observaciones (nota fija)</div>
-      <textarea class="obs" data-inp="obs" data-id="${id}" placeholder="Referencias del domicilio, acuerdos, datos útiles...">${esc(c.obs||'')}</textarea>
-      <div class="save-row"><span class="save-hint" id="hint-${id}"></span></div>
+      <div class="section"><div class="field-label">Dirección del negocio</div>
+        <div class="addr-box"><div class="addr-line ${c.direccion?'':'vacio'}">${c.direccion?esc(c.direccion):'Sin dirección registrada'}</div>
+        ${c.direccion?`<button class="copy-btn" data-act="copy" data-id="${id}">Copiar</button>`:''}</div>
+      </div>
+
+      <div class="section"><div class="field-label">Teléfonos</div>${telsHtml(c)}</div>
+
+      <div class="section"><div class="field-label">Estatus de la visita</div>
+        <select class="status-select" data-chg="visita" data-id="${id}">
+          ${STATUS_OPTS.map(o=>`<option value="${o.v}" ${o.v===c.visita?'selected':''}>${o.label}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="section"><div class="field-label">Observaciones (nota fija)</div>
+        <textarea class="obs" data-inp="obs" data-id="${id}" placeholder="Referencias del domicilio, acuerdos, datos útiles...">${esc(c.obs||'')}</textarea>
+        <div class="save-row"><span class="save-hint" id="hint-${id}"></span></div>
+      </div>
 
       <div class="section"><div class="field-label">Compromisos de pago</div>${compHtml(c, hoy)}</div>
       <div class="section"><div class="field-label">Historial de gestiones</div>${histHtml(c)}</div>
     </div>
   </div>`;
+}
+
+/* Agregar teléfono */
+let tQuien = 'Familiar';
+function openTelAdd(id){
+  const c = store.cuentas[id]; if(!c) return;
+  tQuien = 'Familiar';
+  openSheet(`
+    <h2>Agregar teléfono</h2>
+    <div class="sh-sub">${esc(c.cliente)} · el anterior no se borra, queda guardado en la cuenta.</div>
+    <div class="section"><div class="field-label">Número (10 dígitos)</div>
+      <input class="inp" id="tNum" type="tel" inputmode="numeric" maxlength="16" placeholder="33 1234 5678"></div>
+    <div class="section"><div class="field-label">¿De quién es?</div>
+      <div class="seg" id="tQuien">${TEL_QUIEN.map(q=>`<button data-act="t-quien" data-q="${q}" class="${q===tQuien?'on':''}">${q}</button>`).join('')}</div>
+      <input class="inp" id="tNota" style="margin-top:8px" placeholder="Nombre o parentesco (ej. hija, vecino del local)"></div>
+    <label class="check"><input type="checkbox" id="tUsar" checked> Usar este número para Llamar y WhatsApp</label>
+    <div class="btn-row">
+      <button class="btn" data-act="sheet-close">Cancelar</button>
+      <button class="btn primary" data-act="t-save" data-id="${esc(id)}">Guardar</button>
+    </div>`);
+}
+function saveTel(id){
+  const c = store.cuentas[id]; if(!c) return closeSheet();
+  const num = limpiaTel($('tNum').value);
+  if(num.length!==10){ toast('El número debe tener 10 dígitos'); return; }
+  const nota = $('tNota').value.trim(), usar = $('tUsar').checked;
+  const now = new Date().toISOString();
+  if(num !== c.tel && !c.telefonos.some(t=>t.num===num)) c.telefonos.push({id:uid(), num, quien:tQuien, nota, ts:now});
+  if(usar) c.telActivo = (num===c.tel) ? '' : num;
+  c.historial.unshift({id:uid(), ts:now, tipo:'Teléfono', auto:true, resultado:'Teléfono agregado',
+    comentario:`${fmtTel(num)} · ${tQuien}${nota?' ('+nota+')':''}${usar?' · ahora en uso':''}`});
+  saveData(); closeSheet(); render(); toast('Teléfono guardado');
+}
+function usarTel(id, num){
+  const c = store.cuentas[id]; if(!c) return;
+  c.telActivo = num || '';
+  c.historial.unshift({id:uid(), ts:new Date().toISOString(), tipo:'Teléfono', auto:true, resultado:'Cambio de teléfono en uso',
+    comentario: fmtTel(telActivo(c)) + (num?'':' (original de la lista)')});
+  saveData(); render(); toast('Teléfono en uso: ' + fmtTel(telActivo(c)));
 }
 
 function render(){
@@ -1214,8 +1345,16 @@ document.addEventListener('click', e=>{
   switch(act){
     case 'toggle':
       if(openDetails.has(id)) openDetails.delete(id); else openDetails.add(id);
-      { const card = el.closest('.card'); const d = card && card.querySelector('.detail'); if(d) d.classList.toggle('open'); }
+      { const card = el.closest('.card'); const d = card && card.querySelector('.detail');
+        if(d){ const o = openDetails.has(id); d.classList.toggle('open', o); card.classList.toggle('open', o); } }
       break;
+    case 'tel-add': openTelAdd(id); break;
+    case 't-quien':
+      tQuien = el.dataset.q;
+      document.querySelectorAll('#tQuien button').forEach(b=>b.classList.toggle('on', b===el));
+      break;
+    case 't-save': saveTel(id); break;
+    case 'tel-usar': usarTel(id, el.dataset.num); break;
     case 'assign': {
       e.stopPropagation();
       const c = store.cuentas[id]; c.assign = cycleAssign(c.assign||''); c.actualizado = new Date().toISOString();
@@ -1292,7 +1431,6 @@ document.addEventListener('input', e=>{
       const txt = (c.obs||'').trim();
       strip.classList.toggle('show', !!txt);
       strip.querySelector('.nt').textContent = txt;
-      strip.querySelector('.nh').textContent = txt ? c.obsAt : '';
     }
     const hint = document.getElementById('hint-'+id);
     if(hint){ hint.textContent = 'Guardado ' + nowStr(); hint.classList.add('ok'); }
