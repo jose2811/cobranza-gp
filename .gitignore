@@ -1,0 +1,8 @@
+# Nunca subir respaldos ni archivos de cartera reales
+respaldo-*.json
+*.json
+!manifest.json
+*.csv
+*.txt
+*.xlsx
+!ejemplos/**
