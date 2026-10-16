@@ -22,6 +22,7 @@ Columnas: `SafiCreditoID | Status | Oficina | Cliente | Saldo insoluto | Saldo e
 Si pegas o cargas con encabezados y agregas columnas nuevas al final (ej. "Domicilio casa"), se guardan solas y aparecen en **Más datos** al abrir la cuenta. Solo hace falta actualizar la app si se quiere que una columna haga algo especial.
 
 ## Versiones
+- **1.10.0** — Cintilla muestra la última gestión (hora, tipo, resultado y comentario); botón "▲ Cerrar" al final del detalle; rondas: la cuenta gestionada en las últimas 3 horas se atenúa con ✓ y baja al final, contador de atendidas en el encabezado.
 - **1.9.0** — Días de atraso estimados: las cuentas que siguen en seguimiento suman un día por cada día desde su última carga (del día con fecha: después del vencimiento); se detiene si se registra pago; marca "est."; al recargar se usan los días reales. Datos v5.
 - **1.8.0** — Plan de pago: varios pagos con fecha y monto, botón Resto, condonación de multa condicionada (8+ días: total = saldo en atraso − multa), mensaje de confirmación por WhatsApp (solo titular), aviso 📋 en la tarjeta y cierre automático: condonación procede o se cancela. Datos v4.
 - **1.7.1** — Mensajes preventivos con tono de recordatorio de cortesía (sin sonar a cobranza).

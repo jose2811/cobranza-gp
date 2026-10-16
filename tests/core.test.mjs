@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const code = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
 const C = new Function(code + `; return {APP_VERSION, STORE_KEY, SCHEMA, DEFAULT_AJUSTES, parseMonto, parseInput, planMerge,
-  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo, parseFecha, cuandoTexto, puedeCondonar, planTotalSugerido, planResto, planMensaje, evaluarPlan, diasEstimados, efectiva};`)();
+  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo, parseFecha, cuandoTexto, puedeCondonar, planTotalSugerido, planResto, planMensaje, evaluarPlan, diasEstimados, efectiva, atendidaRonda, cuandoCorto};`)();
 
 let ok = 0;
 const t = (name, fn) => { fn(); ok++; console.log('✓', name); };
@@ -354,6 +354,16 @@ t('días de atraso estimados', ()=>{
   C.applyMerge(store, C.planMerge(store, C.parseInput(tsv([HEAD,R1]))), carga);
   assert.equal(store.cuentas['900000001'].datosAl, carga);
   assert.equal(C.migrate({schema:4, cuentas:{'1':{id:'1', alta:carga}}}).cuentas['1'].datosAl, carga);
+});
+
+t('ronda: atendida en las últimas 3 horas', ()=>{
+  const now = new Date(2026,9,16,12,0);
+  const c = h => ({historial:[{tipo:'Sistema', auto:true, ts:new Date(2026,9,16,11,59).toISOString()}, {tipo:'WhatsApp', ts:h.toISOString()}]});
+  assert.equal(C.atendidaRonda(c(new Date(2026,9,16,10,30)), now), true);
+  assert.equal(C.atendidaRonda(c(new Date(2026,9,16,8,30)), now), false);
+  assert.equal(C.atendidaRonda({historial:[{tipo:'Sistema', auto:true, ts:now.toISOString()}]}, now), false);
+  assert.ok(C.cuandoCorto(new Date(2026,9,16,9,5).toISOString(), now).startsWith('hoy'));
+  assert.ok(C.cuandoCorto(new Date(2026,9,15,9,5).toISOString(), now).startsWith('ayer'));
 });
 
 console.log(`\n${ok} pruebas OK`);

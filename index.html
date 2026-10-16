@@ -270,6 +270,13 @@
   .mini-btn.on{background:var(--accent);border-color:var(--accent);color:#1a1006;}
   .plan-sum{margin-top:10px;}
   .c-dias small.est{font-family:inherit;font-size:10px;font-weight:700;opacity:.75;}
+  .card.ronda{opacity:.55;}
+  .card.ronda.open{opacity:1;}
+  .card.ronda .c-name::before{content:'✓ ';color:var(--ok);}
+  .note-strip.last{background:rgba(111,168,232,.08);}
+  .note-strip.last b{font-weight:700;color:var(--ink-dim);}
+  .close-detail{display:block;width:100%;margin-top:16px;padding:13px;border-radius:11px;border:1px solid var(--card-border);
+    background:var(--neutral-bg);color:var(--ink);font-size:14px;font-weight:700;}
   .plan-tag{font-size:10.5px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.04em;}
   .btn-row.tight{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}
   .banner.undo{background:var(--ok-bg);border-color:rgba(79,180,119,.4);color:var(--ok);}
@@ -353,7 +360,7 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.10.0';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
@@ -878,6 +885,23 @@ function startOfDay(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate
 function dayDiff(from, to){ return Math.round((startOfDay(to) - startOfDay(from)) / 864e5); }
 
 function ultimaGestion(c){ return (c.historial||[]).find(h=>GESTION_TIPOS.includes(h.tipo)) || null; }
+// "Ronda": una cuenta gestionada en las últimas RONDA_HORAS horas cuenta como atendida
+// (se atenúa y baja al final de la lista). Pensado para 2 rondas al día.
+const RONDA_HORAS = 3;
+function atendidaRonda(c, now){
+  const g = ultimaGestion(c); if(!g) return false;
+  const t = new Date(g.ts); if(isNaN(t)) return false;
+  return ((now || new Date()) - t) < RONDA_HORAS * 36e5;
+}
+function cuandoCorto(iso, now){
+  const d = new Date(iso); if(isNaN(d)) return '';
+  now = now || new Date();
+  const hora = d.toLocaleTimeString('es-MX',{hour:'numeric',minute:'2-digit'});
+  const dd = dayDiff(d, now);
+  if(dd === 0) return 'hoy ' + hora;
+  if(dd === 1) return 'ayer ' + hora;
+  return d.toLocaleDateString('es-MX',{day:'numeric',month:'short'}) + ' ' + hora;
+}
 function diasSinGestion(c, now){
   const g = ultimaGestion(c);
   const ref = g ? g.ts : c.alta;
@@ -1048,6 +1072,11 @@ function visibleList(){
   const list = baseList().filter(c=>f.fn(c, hoy));
   list.sort((a,b)=> (Number(b.dias)||0)-(Number(a.dias)||0) || (Number(b.saldo)||0)-(Number(a.saldo)||0) ||
     String(a.vence||'9999').localeCompare(String(b.vence||'9999')) || String(a.cliente).localeCompare(String(b.cliente)));
+  // Las atendidas en esta ronda bajan al final (sin perder su orden entre ellas).
+  if(!routeOrder && filtro!=='archivadas'){
+    const now = new Date();
+    list.sort((a,b)=>(atendidaRonda(a,now)?1:0)-(atendidaRonda(b,now)?1:0));
+  }
   if(routeOrder && filtro!=='archivadas'){
     const pos = new Map(routeOrder.map((id,i)=>[id,i]));
     list.sort((a,b)=>(pos.has(a.id)?pos.get(a.id):1e9)-(pos.has(b.id)?pos.get(b.id):1e9));
@@ -1144,11 +1173,24 @@ function planesHtml(c){
       </div>
     </div></div>`;
 }
+// Cintilla de la tarjeta: lo último que pasó (última gestión). Si no hay, la nota fija.
+function stripHtml(c){
+  const id = esc(c.id);
+  const g = ultimaGestion(c);
+  if(g){
+    const ic = {Llamada:'📞', WhatsApp:'💬', Visita:'🚶', Otro:'📝'}[g.tipo] || '📝';
+    const txt = [g.resultado, g.comentario].filter(Boolean).join(' — ');
+    return `<div class="note-strip show last" id="note-${id}" data-act="toggle" data-id="${id}"><span class="ni">${ic}</span>
+      <span class="nt"><b>${esc(cuandoCorto(g.ts))} · ${esc(g.tipo)}</b>${txt?' · '+esc(txt):''}</span></div>`;
+  }
+  const obs = (c.obs||'').trim();
+  return `<div class="note-strip ${obs?'show':''}" id="note-${id}" data-act="toggle" data-id="${id}"><span class="ni">📝</span><span class="nt">${esc(obs)}</span></div>`;
+}
 function flagsHtml(c, hoy){
   const out = [];
   const dsg = diasSinGestion(c);
   const g = ultimaGestion(c);
-  if(g && dsg===0) out.push(`<span class="flag ok">✓ Gestionada hoy</span>`);
+  if(g && dsg===0) out.push(`<span class="flag ok">✓ Gestionada ${esc(cuandoCorto(g.ts))}</span>`);
   else if(!g && dsg===0) out.push(`<span class="flag">Nueva · sin gestión</span>`);
   else out.push(`<span class="flag ${dsg>=3?'warn':''}">⏱ ${dsg} ${dsg===1?'día':'días'} sin gestión</span>`);
   const p = compPendientes(c)[0];
@@ -1244,8 +1286,8 @@ function cardHtml(c, pos, hoy){
   const tel = telActivo(c);
   const tercero = esTercero(c);
   const wa = waUrl(Object.assign({}, c, {tel}), store.ajustes, tercero);
-  const obs = (c.obs||'').trim();
-  return `<div class="card t-${tramo(c)} st-${vmeta.cls.replace('visita-','')} ${open}">
+  const ronda = atendidaRonda(c);
+  return `<div class="card t-${tramo(c)} st-${vmeta.cls.replace('visita-','')} ${ronda?'ronda':''} ${open}" id="card-${id}">
     <div class="c-head" data-act="toggle" data-id="${id}">
       <div class="order-badge ${routeOrder?'show':''}">${pos+1}</div>
       <div class="c-main">
@@ -1255,7 +1297,7 @@ function cardHtml(c, pos, hoy){
       <button class="assign-chip ${ameta.cls}" data-act="assign" data-id="${id}">${ameta.v?ameta.label:'Asignar'}</button>
     </div>
     ${flagsHtml(c, hoy)}
-    ${obs?`<div class="note-strip show" id="note-${id}" data-act="toggle" data-id="${id}"><span class="ni">📝</span><span class="nt">${esc(obs)}</span></div>`:`<div class="note-strip" id="note-${id}" data-act="toggle" data-id="${id}"><span class="ni">📝</span><span class="nt"></span></div>`}
+    ${stripHtml(c)}
     <div class="actions">
       ${tel ? `<a class="act-btn call" href="tel:${esc(telMarcar(tel))}" data-act="call" data-id="${id}"><span class="ic">📞</span>Llamar</a>`
             : `<span class="act-btn call disabled"><span class="ic">📞</span>Sin tel.</span>`}
@@ -1297,6 +1339,7 @@ function cardHtml(c, pos, hoy){
       <div class="section"><div class="field-label">Historial de gestiones</div>${histHtml(c)}</div>
       <div class="section"><button class="btn danger small" data-act="borrar" data-id="${id}">🗑 Borrar esta cuenta</button>
         <div class="help">Si solo ya no le darás seguimiento, mejor usa Archivar (se puede restaurar).</div></div>
+      <button class="close-detail" data-act="collapse" data-id="${id}">▲ Cerrar</button>
     </div>
   </div>`;
 }
@@ -1352,7 +1395,9 @@ function render(){
   $('stAtraso').textContent = fmtMoney(activas.reduce((s,c)=>s+(Number(c.saldo)||0),0));
   $('stHoy').textContent = activas.reduce((s,c)=>s+compPendientes(c).filter(x=>x.fecha===hoy).length,0);
   const nAct = all.filter(c=>!c.archivada).length;
+  const nRonda = all.filter(c=>!c.archivada && atendidaRonda(c)).length;
   $('subCount').textContent = `${nAct} ${nAct===1?'cuenta activa':'cuentas activas'}` +
+    (nRonda ? ` · ✓ ${nRonda} atendida${nRonda===1?'':'s'} en esta ronda` : '') +
     (filtro!=='todas' || oficinaSel || busqueda ? ` · mostrando ${list.length}` : '');
 
   // Filtros con conteo
@@ -1456,7 +1501,8 @@ function saveGestion(){
   c.historial.unshift({id:uid(), ts:new Date().toISOString(), tipo:gState.tipo, resultado:res, comentario:com});
   saveData();
   if(res==='Promesa de pago'){ render(); openCompromiso(c.id); return; }
-  closeSheet(); render(); toast('Gestión guardada');
+  openDetails.delete(c.id);
+  closeSheet(); render(); toast(routeOrder ? 'Gestión guardada' : 'Gestión guardada · la cuenta pasa al final');
 }
 
 /* Compromiso */
@@ -1903,6 +1949,15 @@ document.addEventListener('click', e=>{
       { const card = el.closest('.card'); const d = card && card.querySelector('.detail');
         if(d){ const o = openDetails.has(id); d.classList.toggle('open', o); card.classList.toggle('open', o); } }
       break;
+    case 'collapse': {
+      openDetails.delete(id);
+      const card = document.getElementById('card-'+id);
+      if(card){
+        card.classList.remove('open'); const d = card.querySelector('.detail'); if(d) d.classList.remove('open');
+        const top = card.getBoundingClientRect().top + window.scrollY - ($('filters').offsetHeight + 8);
+        window.scrollTo({top, behavior:'smooth'});
+      }
+      break; }
     case 'tel-add': openTelAdd(id); break;
     case 't-quien':
       tQuien = el.dataset.q;
@@ -1994,11 +2049,7 @@ document.addEventListener('input', e=>{
     c.obsAt = (c.obs||'').trim() ? nowStr() : '';
     saveData();
     const strip = document.getElementById('note-'+id);
-    if(strip){
-      const txt = (c.obs||'').trim();
-      strip.classList.toggle('show', !!txt);
-      strip.querySelector('.nt').textContent = txt;
-    }
+    if(strip) strip.outerHTML = stripHtml(c);
     const hint = document.getElementById('hint-'+id);
     if(hint){ hint.textContent = 'Guardado ' + nowStr(); hint.classList.add('ok'); }
   }, 500);
