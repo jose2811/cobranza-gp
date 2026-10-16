@@ -296,4 +296,16 @@ t('columna de fecha: con encabezado, sin encabezado (14) y pegado desde WhatsApp
   assert.ok(mala.filas[0].errores.some(e=>e.includes('Fecha')));
 });
 
+t('preventivo: tono de cortesía, sin palabras de cobranza; texto 1.7.0 se actualiza', ()=>{
+  const aj = C.DEFAULT_AJUSTES;
+  for(const v of C.versiones(aj.tplDelDia))
+    assert.ok(!/cobr|adeud|deuda|atraso|pendiente|regulariz|vencid|urge|debe/i.test(v), v);
+  const v170 = ["{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Nada más para recordarle que {cuando} le toca su pago. Cualquier cosa aquí estoy.",
+    "{saludo} {nombre}, soy {yo} de Crediclub. Le recuerdo que su próximo pago es {cuando}. Si tiene alguna duda, con gusto le apoyo.",
+    "{saludo} {nombre}, ¿qué tal? Soy {yo}, de Crediclub. Le dejo el recordatorio: su pago es {cuando}. ¡Muchas gracias!",
+    "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Le mando un saludo y quedo a sus órdenes para cualquier cosa que necesite con su crédito.",
+    "{saludo} {nombre}, soy {yo} de Crediclub. Paso a saludarle; cualquier duda con su crédito o sus pagos, aquí estoy para apoyarle."].join("\n---\n");
+  assert.equal(C.migrate({schema:3, cuentas:{}, ajustes:{tplDelDia:v170}}).ajustes.tplDelDia, aj.tplDelDia);
+});
+
 console.log(`\n${ok} pruebas OK`);

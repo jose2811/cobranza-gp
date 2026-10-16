@@ -22,6 +22,7 @@ Columnas: `SafiCreditoID | Status | Oficina | Cliente | Saldo insoluto | Saldo e
 Si pegas o cargas con encabezados y agregas columnas nuevas al final (ej. "Domicilio casa"), se guardan solas y aparecen en **Más datos** al abrir la cuenta. Solo hace falta actualizar la app si se quiere que una columna haga algo especial.
 
 ## Versiones
+- **1.7.1** — Mensajes preventivos con tono de recordatorio de cortesía (sin sonar a cobranza).
 - **1.7.0** — Columna opcional "Fecha de vencimiento": mensajes preventivos con {cuando} (hoy / mañana / este jueves 17), aviso 📅 en la tarjeta, filtro "Paga pronto" (0-3 días) y orden por fecha en cuentas al corriente. Datos v3.
 - **1.6.1** — Ícono nuevo: flecha de recuperación naranja con $ sobre fondo negro.
 - **1.6.0** — Color por tramo de atraso: 🟢 Del día, 🟡 Mora 1-7, 🔴 Mora 8+ (franja y etiqueta en la tarjeta) y filtros por tramo.

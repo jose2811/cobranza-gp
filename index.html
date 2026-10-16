@@ -346,7 +346,7 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.7.1';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
@@ -370,11 +370,12 @@ const DEFAULT_AJUSTES = {
   // Al corriente: las versiones con {cuando} se usan si la cuenta trae fecha de vencimiento (hoy o próxima);
   // las que no lo traen, cuando no hay fecha.
   tplDelDia: [
-    "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Nada más para recordarle que {cuando} le toca su pago. Cualquier cosa aquí estoy.",
-    "{saludo} {nombre}, soy {yo} de Crediclub. Le recuerdo que su próximo pago es {cuando}. Si tiene alguna duda, con gusto le apoyo.",
-    "{saludo} {nombre}, ¿qué tal? Soy {yo}, de Crediclub. Le dejo el recordatorio: su pago es {cuando}. ¡Muchas gracias!",
-    "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Le mando un saludo y quedo a sus órdenes para cualquier cosa que necesite con su crédito.",
-    "{saludo} {nombre}, soy {yo} de Crediclub. Paso a saludarle; cualquier duda con su crédito o sus pagos, aquí estoy para apoyarle."
+    "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub 😊 Le escribo solo como recordatorio de cortesía: su pago es {cuando}. Si ya lo tenía en cuenta, ignore este mensaje. ¡Que esté muy bien!",
+    "{saludo} {nombre}, le saluda {yo} de Crediclub. Le dejo un recordatorio amistoso, por si le ayuda a organizarse: su pago es {cuando}. Cualquier cosa que necesite, aquí estoy 🙂",
+    "{saludo} {nombre}, ¿qué tal? Soy {yo}, de Crediclub. Solo para que lo tenga presente en su agenda: {cuando} es su fecha de pago. ¡Gracias por su confianza!",
+    "{saludo} {nombre} 😊 Soy {yo}, de Crediclub. Le mando un saludo y un pequeño recordatorio: su pago es {cuando}. ¡Que tenga excelente semana!",
+    "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Solo paso a saludarle y ponerme a sus órdenes; cualquier duda con su crédito, aquí estoy 🙂",
+    "{saludo} {nombre}, le saluda {yo} de Crediclub. Quedo a sus órdenes para lo que necesite. ¡Que esté muy bien!"
   ].join("\n---\n"),
   tplMora: [
     "{saludo} {nombre}, soy {yo} de Crediclub. Me gustaría platicar con usted sobre su crédito para ver cómo le puedo apoyar. ¿A qué hora le puedo llamar?",
@@ -395,7 +396,12 @@ const OLD_DEFAULTS = {
   tplDelDia: ["Hola {nombre}, buen día. Soy {yo} de Crediclub. Le escribo para recordarle que hoy es su día de pago. Cualquier duda, con gusto le apoyo.",
     ["{saludo} {nombre}, soy {yo} de Crediclub. Le escribo para recordarle su pago, si ya lo realizó muchas gracias y omita este mensaje 🙂",
      "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Nada más para recordarle su pago; cualquier duda aquí estoy para apoyarle.",
-     "{saludo} {nombre}, le saluda {yo} de Crediclub. Le dejo el recordatorio de su pago. Que tenga excelente día."].join("\n---\n")],
+     "{saludo} {nombre}, le saluda {yo} de Crediclub. Le dejo el recordatorio de su pago. Que tenga excelente día."].join("\n---\n"),
+    ["{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Nada más para recordarle que {cuando} le toca su pago. Cualquier cosa aquí estoy.",
+     "{saludo} {nombre}, soy {yo} de Crediclub. Le recuerdo que su próximo pago es {cuando}. Si tiene alguna duda, con gusto le apoyo.",
+     "{saludo} {nombre}, ¿qué tal? Soy {yo}, de Crediclub. Le dejo el recordatorio: su pago es {cuando}. ¡Muchas gracias!",
+     "{saludo} {nombre}, ¿cómo está? Soy {yo}, de Crediclub. Le mando un saludo y quedo a sus órdenes para cualquier cosa que necesite con su crédito.",
+     "{saludo} {nombre}, soy {yo} de Crediclub. Paso a saludarle; cualquier duda con su crédito o sus pagos, aquí estoy para apoyarle."].join("\n---\n")],
   tplMora: ["Hola {nombre}, buen día. Soy {yo} de Crediclub. Le escribo porque tengo registrado un pago pendiente en su crédito y quiero apoyarle a regularizarlo. ¿Tiene un momento para platicar?"],
   tplTerceroDia: ["Hola, buen día. Soy {yo} de Crediclub. Este número nos fue proporcionado como contacto de {cliente}. ¿Me podría apoyar pidiéndole que se comunique conmigo a este número? Muchas gracias."],
   tplTerceroMora: ["Hola, buen día. Soy {yo} de Crediclub. Este número nos fue proporcionado como referencia de {cliente} y necesito comunicarme con él/ella por un tema importante. ¿Me podría apoyar pidiéndole que me contacte a este número? Muchas gracias."]
