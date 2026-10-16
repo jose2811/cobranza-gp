@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const code = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
 const C = new Function(code + `; return {APP_VERSION, STORE_KEY, SCHEMA, DEFAULT_AJUSTES, parseMonto, parseInput, planMerge,
-  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones};`)();
+  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo};`)();
 
 let ok = 0;
 const t = (name, fn) => { fn(); ok++; console.log('✓', name); };
@@ -237,6 +237,15 @@ t('pegado desde WhatsApp en celular (tabuladores convertidos en espacios)', ()=>
   const q = r => r.map(v=>/[,"]/.test(v)?'"'+v+'"':v).join(',');
   const pc = C.parseInput([HEAD].concat(filasTab).map(q).join('\n'));
   assert.ok(!pc.modoEspacios); assert.equal(pc.filas.filter(f=>!f.errores.length).length, 3);
+});
+
+t('tramos de atraso', ()=>{
+  assert.equal(C.tramo({status:'Del Dia', dias:0}), 'dia');
+  assert.equal(C.tramo({status:'Mora', dias:1}), 'm1');
+  assert.equal(C.tramo({status:'Mora', dias:7}), 'm1');
+  assert.equal(C.tramo({status:'Mora', dias:8}), 'm8');
+  assert.equal(C.tramo({status:'Mora', dias:45}), 'm8');
+  assert.equal(C.tramo({status:'Mora', dias:0}), 'm1');
 });
 
 console.log(`\n${ok} pruebas OK`);

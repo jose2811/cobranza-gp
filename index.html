@@ -257,6 +257,14 @@
   .c-head .assign-chip{flex:0 0 auto;}
   .c-head .order-badge{margin-top:1px;}
   .flags{padding:0 14px 11px;}
+  /* Tramos de atraso: franja izquierda + etiqueta */
+  .card.t-dia{border-left:5px solid var(--ok);}
+  .card.t-m1{border-left:5px solid var(--warn);}
+  .card.t-m8{border-left:5px solid var(--bad);}
+  .pill.tramo-dia{background:var(--ok-bg);color:var(--ok);}
+  .pill.tramo-m1{background:var(--warn-bg);color:var(--warn);}
+  .pill.tramo-m8{background:var(--bad);color:#1a0905;}
+  .card.t-m1 .c-dias{color:var(--warn);}
   .banner.undo{background:var(--ok-bg);border-color:rgba(79,180,119,.4);color:var(--ok);}
   .banner.undo button{background:var(--ok);color:#08140c;}
   .banner button.x{background:transparent;color:inherit;padding:6px 4px;}
@@ -338,7 +346,7 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
@@ -744,6 +752,15 @@ function compEstado(comp, hoy){
   return 'futuro';
 }
 function esMora(c){ return normKey(c.status).includes('mora'); }
+// Tramo de atraso para el color de la tarjeta: 'dia' (0 días), 'm1' (1-7), 'm8' (8 o más).
+// Si el status dice Mora pero trae 0 días, se trata como 1-7.
+function tramo(c){
+  const d = Number(c.dias)||0;
+  if(d >= 8) return 'm8';
+  if(d >= 1 || esMora(c)) return 'm1';
+  return 'dia';
+}
+const TRAMO_LBL = {dia:'Del día', m1:'Mora 1-7', m8:'Mora 8+'};
 function esDelDia(c){ return normKey(c.status).includes('deldia') || normKey(c.status)==='dia'; }
 
 function haversine(a,b){
@@ -807,8 +824,9 @@ const FILTROS = [
   {k:'hoy',        label:'Compromiso hoy',     fn:(c,h)=>!c.archivada && compPendientes(c).some(x=>x.fecha===h)},
   {k:'vencido',    label:'Compromiso vencido', fn:(c,h)=>!c.archivada && compPendientes(c).some(x=>x.fecha<h)},
   {k:'singestion', label:'Sin gestión 3+ días',fn:c=>!c.archivada && diasSinGestion(c)>=3},
-  {k:'mora',       label:'Mora',               fn:c=>!c.archivada && esMora(c)},
-  {k:'deldia',     label:'Del día',            fn:c=>!c.archivada && esDelDia(c)},
+  {k:'deldia',     label:'🟢 Del día',         fn:c=>!c.archivada && tramo(c)==='dia'},
+  {k:'mora17',     label:'🟡 Mora 1-7',        fn:c=>!c.archivada && tramo(c)==='m1'},
+  {k:'mora8',      label:'🔴 Mora 8+',         fn:c=>!c.archivada && tramo(c)==='m8'},
   {k:'yo',         label:'Mías',               fn:c=>!c.archivada && c.assign==='yo'},
   {k:'gerente',    label:'Gerente',            fn:c=>!c.archivada && c.assign==='gerente'},
   {k:'archivadas', label:'Archivadas',         fn:c=>!!c.archivada},
@@ -956,7 +974,8 @@ function flagsHtml(c, hoy){
 function lineaHtml(c){
   const mora = esMora(c);
   const dias = Number(c.dias)||0, saldo = Number(c.saldo)||0;
-  const pill = `<span class="pill ${mora?'cartera-mora':'cartera-deldia'}">${esc(c.status||'—')}</span>`;
+  const tr = tramo(c);
+  const pill = `<span class="pill tramo-${tr}">${TRAMO_LBL[tr]}</span>`;
   if(!dias && !saldo) return `<div class="c-line">${pill}<span class="c-ok">Al corriente</span></div>`;
   return `<div class="c-line">${pill}<span class="c-dias">${dias} ${dias===1?'día':'días'}</span><span class="c-saldo">${esc(fmtMoney(saldo))} <small>en atraso</small></span></div>`;
 }
@@ -1017,7 +1036,7 @@ function cardHtml(c, pos, hoy){
   const tercero = esTercero(c);
   const wa = waUrl(Object.assign({}, c, {tel}), store.ajustes, tercero);
   const obs = (c.obs||'').trim();
-  return `<div class="card st-${vmeta.cls.replace('visita-','')} ${open}">
+  return `<div class="card t-${tramo(c)} st-${vmeta.cls.replace('visita-','')} ${open}">
     <div class="c-head" data-act="toggle" data-id="${id}">
       <div class="order-badge ${routeOrder?'show':''}">${pos+1}</div>
       <div class="c-main">
