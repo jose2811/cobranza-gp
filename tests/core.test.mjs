@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const code = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
 const C = new Function(code + `; return {APP_VERSION, STORE_KEY, SCHEMA, DEFAULT_AJUSTES, parseMonto, parseInput, planMerge,
-  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo, parseFecha, cuandoTexto, puedeCondonar, planTotalSugerido, planResto, planMensaje, evaluarPlan, diasEstimados, efectiva, atendidaRonda, cuandoCorto, reporteGerente};`)();
+  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo, parseFecha, cuandoTexto, puedeCondonar, planTotalSugerido, planResto, planMensaje, evaluarPlan, diasEstimados, efectiva, atendidaRonda, cuandoCorto, reporteGerente, analizarCambio};`)();
 
 let ok = 0;
 const t = (name, fn) => { fn(); ok++; console.log('✓', name); };
@@ -15,7 +15,7 @@ const R1 = ['900000001','Mora','CI-PRUEBA','CLIENTE PRUEBA UNO',' $20,212.33 ','
 const R2 = ['900000002','Del Dia','CI-PRUEBA','MARÍA PRUEBA DOS',' $19,566.79 ',' $-   ',' $-   ','0','4 de 8','0000000002','20.6800000','-103.3600000','AV INVENTADA 45, COLONIA EJEMPLO'];
 const tsv = rows => rows.map(r=>r.join('\t')).join('\n');
 
-t('clave fija y esquema', ()=>{ assert.equal(C.STORE_KEY,'cobranza_gp_datos'); assert.equal(C.SCHEMA,5); });
+t('clave fija y esquema', ()=>{ assert.equal(C.STORE_KEY,'cobranza_gp_datos'); assert.equal(C.SCHEMA,6); });
 
 t('montos', ()=>{
   assert.equal(C.parseMonto(' $20,212.33 '), 20212.33);
@@ -82,7 +82,8 @@ t('mezcla: nuevas, actualizadas, conserva historial/compromisos/asignación, not
   assert.deepEqual([plan.nuevas,plan.actualizadas],[0,1]);
   C.applyMerge(store, plan, '2026-10-05T15:00:00.000Z');
   assert.equal(c.dias,0); assert.equal(c.assign,'yo'); assert.equal(c.compromisos.length,1);
-  assert.equal(c.historial[0].comentario,'Días de atraso: 7 → 0 · Saldo en atraso: $4,045 → $0');
+  assert.ok(c.historial[0].comentario.startsWith('Días de atraso: 7 → 0 · Saldo en atraso: $4,045 → $0 · Bajó $4,045 · abono, quedó al corriente'), c.historial[0].comentario);
+  assert.equal(c.cambio.tipo,'abono'); assert.equal(c.cambio.diff,-4045);
   assert.equal(c.historial[1].tipo,'Llamada');
   assert.ok(store.cuentas['900000002'], 'la cuenta que no vino en la carga no se borra');
 });
@@ -173,7 +174,7 @@ t('migración v1 → v2 agrega campos sin borrar', ()=>{
   const v1 = {schema:1, cuentas:{'900000004':{id:'900000004', tel:'523300000000', historial:[{tipo:'Visita'}], compromisos:[]}}};
   const m = C.migrate(v1);
   const c = m.cuentas['900000004'];
-  assert.equal(m.schema,5); assert.deepEqual(c.telefonos,[]); assert.equal(c.telActivo,''); assert.deepEqual(c.extras,{});
+  assert.equal(m.schema,6); assert.deepEqual(c.telefonos,[]); assert.equal(c.telActivo,''); assert.deepEqual(c.extras,{});
   assert.equal(c.tel,'3300000000'); assert.equal(c.historial.length,1);
 });
 
@@ -394,6 +395,25 @@ t('reporte al gerente', ()=>{
   assert.ok(!r.msg.includes('Otra Oficina') && !r.msg.includes('Vieja Archivada'));
   const todas = C.reporteGerente(cuentas, 'CI-PRUEBA', {now, todas:true});
   assert.ok(todas.msg.indexOf('No contesta') < todas.msg.indexOf('Promesa de pago'), 'orden cronológico');
+});
+
+t('cambio de saldo: abono, multa, cuota, mixto y acumulado', ()=>{
+  const ayer = new Date(2026,9,21,9).toISOString(), hoy = new Date(2026,9,22,9).toISOString();
+  const prev = {saldo:2000, insoluto:20000, multa:0, dias:5, datosAl:ayer};
+  const ab = C.analizarCambio(prev, {saldo:1500, insoluto:19700, multa:0, dias:5}, hoy);
+  assert.equal(ab.tipo,'abono'); assert.equal(ab.diff,-500);
+  assert.ok(ab.texto.startsWith('Bajó $500 · abono') && ab.texto.includes('insoluto $300'), ab.texto);
+  const mu = C.analizarCambio(prev, {saldo:2500, insoluto:20000, multa:500, dias:6}, hoy);
+  assert.equal(mu.tipo,'cargo'); assert.equal(mu.texto,'Subió $500 · multa $500');
+  const mc = C.analizarCambio(prev, {saldo:3500, insoluto:20000, multa:500, dias:12}, hoy);
+  assert.equal(mc.texto,'Subió $1,500 · multa $500 + cuota o cargo nuevo $1,000');
+  const p8 = C.analizarCambio({...prev, multa:500}, {saldo:2500, multa:500, dias:8}, hoy);
+  assert.ok(p8.texto.includes('probable multa (pasó a 8 días)'), p8.texto);
+  const mx = C.analizarCambio(prev, {saldo:2300, insoluto:19800, multa:0, dias:9}, hoy);
+  assert.equal(mx.tipo,'mixto');
+  assert.equal(C.analizarCambio(prev, {saldo:2000}, hoy), null);
+  const acum = C.analizarCambio({...prev, datosAl:new Date(2026,9,18,9).toISOString()}, {saldo:1000}, hoy);
+  assert.ok(acum.texto.endsWith('acumulado desde el 18 oct'), acum.texto);
 });
 
 console.log(`\n${ok} pruebas OK`);

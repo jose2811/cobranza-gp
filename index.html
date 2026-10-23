@@ -271,6 +271,11 @@
   .plan-sum{margin-top:10px;}
   .c-dias small.est{font-family:inherit;font-size:10px;font-weight:700;opacity:.75;}
   .pago-btn{width:100%;margin-top:8px;background:var(--ok-bg);border-color:rgba(79,180,119,.5);color:var(--ok);}
+  .cambio-box{margin-bottom:12px;padding:10px 12px;border-radius:10px;font-size:12.5px;line-height:1.45;color:var(--ink-dim);border:1px solid var(--card-border);}
+  .cambio-box b{color:var(--ink);font-weight:600;}
+  .cambio-box.abono{background:var(--ok-bg);border-color:rgba(79,180,119,.4);}
+  .cambio-box.cargo{background:var(--bad-bg);border-color:rgba(224,96,61,.4);}
+  .cambio-box.mixto{background:var(--warn-bg);border-color:rgba(224,178,61,.4);}
   .card.ronda{opacity:.55;}
   .card.ronda.open{opacity:1;}
   .card.ronda .c-name::before{content:'✓ ';color:var(--ok);}
@@ -362,12 +367,12 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.12.0';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
 // v1: inicial · v2: teléfonos agregados (telefonos/telActivo) y columnas extra (extras)
-const SCHEMA = 5; // v3: fecha de vencimiento (vence) · v4: planes de pago (planes) · v5: datosAl (fecha de la última carga)
+const SCHEMA = 6; // v3: fecha de vencimiento (vence) · v4: planes de pago (planes) · v5: datosAl (fecha de la última carga) · v6: cambio (qué cambió el saldo en la última carga)
 const TEL_QUIEN = ['Cliente','Familiar','Referencia','Otro'];
 
 const GESTION_TIPOS = ['Llamada','WhatsApp','Visita','Otro'];
@@ -678,6 +683,45 @@ function parseInputBase(text){
 function money(n){ return '$' + Number(n||0).toLocaleString('es-MX', {maximumFractionDigits:0}); }
 
 // Calcula qué pasaría al guardar (vista previa). No modifica nada.
+// Compara el saldo en atraso anterior con el nuevo y explica la diferencia:
+// abono (bajó), cargo (subió: multa y/o cuota nueva) o mixto (bajó el insoluto pero subió el atraso).
+function analizarCambio(prev, data, nowIso){
+  if(!prev || data.saldo === undefined) return null;
+  const antes = Number(prev.saldo)||0, despues = Number(data.saldo)||0;
+  const d = Math.round((despues - antes)*100)/100;
+  if(Math.abs(d) < 0.5) return null;
+  const dIns = data.insoluto !== undefined ? Math.round((Number(data.insoluto) - (Number(prev.insoluto)||0))*100)/100 : 0;
+  const dMulta = data.multa !== undefined ? Math.round((Number(data.multa) - (Number(prev.multa)||0))*100)/100 : 0;
+  const diasA = Number(prev.dias)||0, diasN = data.dias !== undefined ? Number(data.dias)||0 : diasA;
+  let tipo, texto;
+  if(d < 0){
+    tipo = 'abono';
+    texto = 'Bajó ' + money2(-d) + ' · abono' + (despues === 0 ? ', quedó al corriente' : '') +
+      (dIns < -0.5 ? ' (también bajó el saldo insoluto ' + money2(-dIns) + ')' : '');
+  } else if(dIns < -0.5){
+    tipo = 'mixto';
+    texto = 'Subió ' + money2(d) + ', pero bajó el saldo insoluto ' + money2(-dIns) + ': hubo abono y entró un cargo mayor (multa o cuota nueva)';
+  } else {
+    tipo = 'cargo';
+    const causas = [];
+    if(dMulta > 0.5){
+      causas.push('multa ' + money2(dMulta));
+      const resto = Math.round((d - dMulta)*100)/100;
+      if(resto > 0.5) causas.push('cuota o cargo nuevo ' + money2(resto));
+    } else if(diasA < DIAS_CONDONA && diasN >= DIAS_CONDONA){
+      causas.push('probable multa (pasó a ' + diasN + ' días) y/o cuota nueva');
+    } else {
+      causas.push('cuota vencida nueva o multa');
+    }
+    texto = 'Subió ' + money2(d) + ' · ' + causas.join(' + ');
+  }
+  // Si la carga anterior era de hace varios días, el cambio es acumulado desde entonces.
+  const desde = new Date(prev.datosAl || prev.alta || 0), hoy = new Date(nowIso || Date.now());
+  if(!isNaN(desde) && dayDiff(desde, hoy) > 1)
+    texto += ' — acumulado desde el ' + desde.getDate() + ' ' + MESES_L[desde.getMonth()].slice(0,3);
+  return {ts: nowIso || new Date().toISOString(), antes, despues, diff:d, tipo, texto};
+}
+
 function planMerge(store, parsed){
   const items = []; const pos = {};
   for(const f of parsed.filas){
@@ -691,7 +735,9 @@ function planMerge(store, parsed){
       if(f.data.saldo !== undefined && Number(prev.saldo) !== Number(f.data.saldo))
         cambios.push('Saldo en atraso: '+money(prev.saldo)+' → '+money(f.data.saldo));
     }
-    const it = {tipo: prev ? 'actualiza' : 'nueva', line:f.line, id, data:f.data, cambios, archivada: !!(prev && prev.archivada)};
+    const cambio = prev ? analizarCambio(prev, f.data, parsed.nowIso) : null;
+    if(cambio) cambios.push(cambio.texto);
+    const it = {tipo: prev ? 'actualiza' : 'nueva', line:f.line, id, data:f.data, cambios, cambio, archivada: !!(prev && prev.archivada)};
     if(pos[id] !== undefined) items[pos[id]] = it; // repetida en la misma carga: gana la última
     else { pos[id] = items.length; items.push(it); }
   }
@@ -725,6 +771,7 @@ function applyMerge(store, plan, nowIso){
     for(const k of DATA_KEYS) if(it.data[k] !== undefined) c[k] = it.data[k];
     if(it.data.extras) c.extras = Object.assign({}, c.extras||{}, it.data.extras);
     c.actualizado = nowIso; c.datosAl = nowIso;
+    c.cambio = it.cambio ? Object.assign({}, it.cambio, {ts: nowIso}) : null;
     if(it.cambios.length){
       c.historial.unshift({id:uid(), ts:nowIso, tipo:'Sistema', auto:true, resultado:'', comentario:it.cambios.join(' · ')});
     }
@@ -763,6 +810,8 @@ function migrate(raw){
     if(!Array.isArray(c.planes)) c.planes = [];
     // v5: fecha de la última carga de datos (para estimar días de atraso)
     if(!c.datosAl) c.datosAl = c.alta;
+    // v6: último cambio de saldo detectado
+    if(c.cambio === undefined) c.cambio = null;
     if(c.tel) c.tel = limpiaTel(c.tel);
   }
   // --- Aquí van las transformaciones de versiones futuras, por ejemplo:
@@ -818,7 +867,8 @@ function reporteGerente(cuentas, oficina, opts){
     const gestHoy = movHoy.filter(h=>GESTION_TIPOS.includes(h.tipo));
     const cerradaHoy = c.archivada && esDeHoy(c.archivada.ts, now);
     if(c.archivada && !cerradaHoy) continue;
-    if(!movHoy.some(h=>!h.auto || h.tipo==='Compromiso' || h.tipo==='Plan') && !cerradaHoy){
+    const cambioHoy = c.cambio && c.cambio.diff && esDeHoy(c.cambio.ts, now);
+    if(!movHoy.some(h=>!h.auto || h.tipo==='Compromiso' || h.tipo==='Plan') && !cerradaHoy && !cambioHoy){
       if(!c.archivada) sinContacto.push(properCase(c.cliente));
       continue;
     }
@@ -832,6 +882,7 @@ function reporteGerente(cuentas, oficina, opts){
       const hora = new Date(g.ts).toLocaleTimeString('es-MX',{hour:'numeric',minute:'2-digit'});
       lin.push('   • ' + hora + ' ' + g.tipo + (g.resultado?' · '+g.resultado:'') + (g.comentario?' — '+g.comentario:''));
     }
+    if(c.cambio && c.cambio.diff && esDeHoy(c.cambio.ts, now)) lin.push('   📊 Según sistema: ' + c.cambio.texto);
     if(cerradaHoy){
       lin.push('   ✅ ' + (c.archivada.motivo==='Se regularizó' ? 'Pagó, cuenta al corriente' : c.archivada.motivo) +
         (c.archivada.nota ? ' — ' + c.archivada.nota : ''));
@@ -1263,6 +1314,11 @@ function flagsHtml(c, hoy){
     else if(st==='hoy') out.push(`<span class="flag warn">🤝 Vence hoy · ${esc(fmtMoney(p.monto))}</span>`);
     else out.push(`<span class="flag">🤝 ${esc(fmtFecha(p.fecha))} · ${esc(fmtMoney(p.monto))}</span>`);
   }
+  if(c.cambio && c.cambio.diff){
+    const k = c.cambio;
+    const lbl = k.tipo==='abono' ? `💸 Abonó ${money2(-k.diff)}` : k.tipo==='mixto' ? `↕ Abono y cargo · ${k.diff>0?'+':''}${money2(k.diff)}` : `⬆ Subió ${money2(k.diff)}`;
+    out.push(`<span class="flag ${k.tipo==='abono'?'ok':k.tipo==='mixto'?'warn':'bad'}" title="${esc(k.texto)}">${lbl}</span>`);
+  }
   const pa = (c.planes||[]).find(p=>p.estado==='activo');
   if(pa){
     const cs = c.compromisos.filter(x=>x.planId===pa.id), hechos = cs.filter(x=>x.estado==='cumplido').length;
@@ -1378,6 +1434,7 @@ function cardHtml(c, pos, hoy){
       </div>
       <button class="btn pago-btn" data-act="pago-cerrar" data-id="${id}">✓ Pagó y cerrar</button>
 
+      ${c.cambio && c.cambio.diff ? `<div class="cambio-box ${c.cambio.tipo}">📊 Última actualización (${esc(cuandoCorto(c.cambio.ts))}): saldo en atraso ${esc(money2(c.cambio.antes))} → ${esc(money2(c.cambio.despues))}<br><b>${esc(c.cambio.texto)}</b></div>` : ''}
       <div class="section">${datosHtml(c)}</div>
 
       <div class="section"><div class="field-label">Dirección del negocio</div>

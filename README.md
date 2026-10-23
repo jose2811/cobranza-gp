@@ -22,6 +22,7 @@ Columnas: `SafiCreditoID | Status | Oficina | Cliente | Saldo insoluto | Saldo e
 Si pegas o cargas con encabezados y agregas columnas nuevas al final (ej. "Domicilio casa"), se guardan solas y aparecen en **Más datos** al abrir la cuenta. Solo hace falta actualizar la app si se quiere que una columna haga algo especial.
 
 ## Versiones
+- **1.12.0** — Detecta cambios de saldo al recargar: 💸 abono / ⬆ subió (multa y/o cuota nueva) / ↕ mixto, con monto, explicación en el detalle, acumulado si la carga anterior era de días atrás, y línea en el reporte al gerente. Datos v6.
 - **1.11.0** — "✓ Pagó y cerrar" (registra pago, cumple compromisos pendientes y archiva como Se regularizó); 📤 Reporte al gerente por oficina con lo trabajado en el día (última gestión o todas, compromisos/plan pendientes, cuentas cerradas y sin contacto), teléfono del gerente guardado por oficina.
 - **1.10.0** — Cintilla muestra la última gestión (hora, tipo, resultado y comentario); botón "▲ Cerrar" al final del detalle; rondas: la cuenta gestionada en las últimas 3 horas se atenúa con ✓ y baja al final, contador de atendidas en el encabezado.
 - **1.9.0** — Días de atraso estimados: las cuentas que siguen en seguimiento suman un día por cada día desde su última carga (del día con fecha: después del vencimiento); se detiene si se registra pago; marca "est."; al recargar se usan los días reales. Datos v5.
