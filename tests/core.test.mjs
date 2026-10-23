@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const code = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
 const C = new Function(code + `; return {APP_VERSION, STORE_KEY, SCHEMA, DEFAULT_AJUSTES, parseMonto, parseInput, planMerge,
-  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo, parseFecha, cuandoTexto, puedeCondonar, planTotalSugerido, planResto, planMensaje, evaluarPlan, diasEstimados, efectiva, atendidaRonda, cuandoCorto, reporteGerente, analizarCambio};`)();
+  applyMerge, migrate, waUrl, diasSinGestion, compEstado, todayKey, detectDelim, telActivo, telMarcar, esTercero, properCase, versiones, tramo, parseFecha, cuandoTexto, puedeCondonar, planTotalSugerido, planResto, planMensaje, evaluarPlan, diasEstimados, efectiva, atendidaRonda, cuandoCorto, reporteGerente, analizarCambio, ubicacionMensaje, ubicacionUrl};`)();
 
 let ok = 0;
 const t = (name, fn) => { fn(); ok++; console.log('✓', name); };
@@ -414,6 +414,15 @@ t('cambio de saldo: abono, multa, cuota, mixto y acumulado', ()=>{
   assert.equal(C.analizarCambio(prev, {saldo:2000}, hoy), null);
   const acum = C.analizarCambio({...prev, datosAl:new Date(2026,9,18,9).toISOString()}, {saldo:1000}, hoy);
   assert.ok(acum.texto.endsWith('acumulado desde el 18 oct'), acum.texto);
+});
+
+t('mandarme ubicación', ()=>{
+  const c = {id:'900000101', cliente:'ANA PRUEBA', direccion:'CALLE FICTICIA 1, COLONIA DEMO', lat:20.6974495, lng:-103.3634862};
+  const m = C.ubicacionMensaje(c);
+  assert.ok(m.includes('Ana Prueba (#900000101)') && m.includes('https://www.google.com/maps/search/?api=1&query=20.6974495,-103.3634862') && m.includes('Coordenadas: 20.6974495, -103.3634862'), m);
+  assert.ok(C.ubicacionUrl(c, '00 0000 0099').startsWith('https://wa.me/520000000099?text='));
+  assert.ok(C.ubicacionUrl(c, '').startsWith('https://wa.me/?text='));
+  assert.ok(!C.ubicacionMensaje({...c, lat:null, lng:null}).includes('maps'));
 });
 
 console.log(`\n${ok} pruebas OK`);

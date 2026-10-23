@@ -271,6 +271,7 @@
   .plan-sum{margin-top:10px;}
   .c-dias small.est{font-family:inherit;font-size:10px;font-weight:700;opacity:.75;}
   .pago-btn{width:100%;margin-top:8px;background:var(--ok-bg);border-color:rgba(79,180,119,.5);color:var(--ok);}
+  .ubic-btn{display:block;margin-top:10px;text-decoration:none;color:var(--accent);}
   .cambio-box{margin-bottom:12px;padding:10px 12px;border-radius:10px;font-size:12.5px;line-height:1.45;color:var(--ink-dim);border:1px solid var(--card-border);}
   .cambio-box b{color:var(--ink);font-weight:600;}
   .cambio-box.abono{background:var(--ok-bg);border-color:rgba(79,180,119,.4);}
@@ -367,7 +368,7 @@
      NÚCLEO: funciones puras (sin pantalla). Las pruebas en tests/ las usan.
      ===================================================================== -->
 <script id="core">
-const APP_VERSION = '1.12.0';
+const APP_VERSION = '1.13.0';
 // Clave FIJA del almacenamiento. NUNCA cambiarla entre versiones.
 const STORE_KEY = 'cobranza_gp_datos';
 // Versión de la estructura de datos guardada. Si cambia, migrate() transforma lo viejo.
@@ -389,6 +390,7 @@ const MOTIVOS_ARCHIVO = ['Liquidó','Se regularizó','Regresa al gerente/asesor'
 const DEFAULT_AJUSTES = {
   nombre: "José Fernández",
   gerentes: {},   // teléfono del gerente por oficina, para el reporte
+  miTel: '',      // mi WhatsApp personal, para mandarme ubicaciones
   // Al corriente: las versiones con {cuando} se usan si la cuenta trae fecha de vencimiento (hoy o próxima);
   // las que no lo traen, cuando no hay fecha.
   tplDelDia: [
@@ -850,6 +852,23 @@ function money2(n){
   n = Number(n)||0;
   return '$' + n.toLocaleString('es-MX', {minimumFractionDigits: n%1 ? 2 : 0, maximumFractionDigits: 2});
 }
+/* ---------- Mandarme ubicación ---------- */
+// Enlace con coordenadas exactas (pin en el punto, sin volver a buscar la dirección).
+function pinUrl(lat, lng){ return 'https://www.google.com/maps/search/?api=1&query=' + lat + ',' + lng; }
+function ubicacionMensaje(c){
+  const lin = ['📍 ' + properCase(c.cliente) + ' (#' + c.id + ')'];
+  if(c.direccion) lin.push(c.direccion);
+  if(hasCoords(c)){
+    lin.push(pinUrl(c.lat, c.lng));
+    lin.push('Coordenadas: ' + c.lat + ', ' + c.lng);
+  }
+  return lin.join('\n');
+}
+function ubicacionUrl(c, miTel){
+  const t = limpiaTel(miTel);
+  return (t.length===10 ? 'https://wa.me/52' + t : 'https://wa.me/') + '?text=' + encodeURIComponent(ubicacionMensaje(c));
+}
+
 /* ---------- Reporte al gerente ---------- */
 // Cuentas de una oficina con movimiento en el día (gestión, compromiso, plan o cierre) y las que no tuvieron contacto.
 function esDeHoy(iso, now){ const d = new Date(iso); return !isNaN(d) && dayDiff(d, now) === 0; }
@@ -1440,6 +1459,7 @@ function cardHtml(c, pos, hoy){
       <div class="section"><div class="field-label">Dirección del negocio</div>
         <div class="addr-box"><div class="addr-line ${c.direccion?'':'vacio'}">${c.direccion?esc(c.direccion):'Sin dirección registrada'}</div>
         ${c.direccion?`<button class="copy-btn" data-act="copy" data-id="${id}">Copiar</button>`:''}</div>
+        ${hasCoords(c)||c.direccion?`<a class="btn small ubic-btn" href="${esc(ubicacionUrl(c, store.ajustes.miTel))}" target="_blank" rel="noopener">📍 Mandarme ubicación por WhatsApp</a>`:''}
       </div>
 
       <div class="section"><div class="field-label">Teléfonos</div>${telsHtml(c)}</div>
@@ -2060,6 +2080,9 @@ function openAjustes(){
     <h2>Ajustes</h2>
     <div class="sh-sub">Se guardan solo en este teléfono.</div>
     <div class="section"><div class="field-label">Mi nombre (para WhatsApp)</div><input class="inp" id="ajNombre" value="${esc(aj.nombre)}"></div>
+    <div class="section"><div class="field-label">Mi WhatsApp personal (para mandarme ubicaciones)</div>
+      <input class="inp" id="ajMiTel" type="tel" inputmode="numeric" value="${esc(aj.miTel||'')}" placeholder="10 dígitos (opcional)">
+      <div class="help">Si lo dejas vacío, WhatsApp te deja elegir el chat.</div></div>
     <div class="section"><div class="field-label">Titular · al corriente (Del día)</div><textarea class="inp" id="ajDia" rows="7">${esc(aj.tplDelDia)}</textarea></div>
     <div class="section"><div class="field-label">Titular · en atraso (Mora)</div><textarea class="inp" id="ajMora" rows="7">${esc(aj.tplMora)}</textarea></div>
     <div class="section"><div class="field-label">Tercera persona · al corriente</div><textarea class="inp" id="ajTDia" rows="6">${esc(aj.tplTerceroDia)}</textarea></div>
@@ -2098,7 +2121,9 @@ function saveAjustes(){
   const nombre = $('ajNombre').value.trim(), dia = $('ajDia').value.trim(), mora = $('ajMora').value.trim();
   const tdia = $('ajTDia').value.trim(), tmora = $('ajTMora').value.trim();
   if(!nombre || !dia || !mora || !tdia || !tmora){ toast('No dejes campos vacíos'); return; }
-  Object.assign(store.ajustes, {nombre, tplDelDia:dia, tplMora:mora, tplTerceroDia:tdia, tplTerceroMora:tmora});
+  const miTel = limpiaTel($('ajMiTel').value);
+  if(miTel && miTel.length!==10){ toast('Tu WhatsApp personal debe tener 10 dígitos'); return; }
+  Object.assign(store.ajustes, {nombre, miTel, tplDelDia:dia, tplMora:mora, tplTerceroDia:tdia, tplTerceroMora:tmora});
   saveData(); closeSheet(); render(); toast('Ajustes guardados');
 }
 function descargarRespaldo(){
